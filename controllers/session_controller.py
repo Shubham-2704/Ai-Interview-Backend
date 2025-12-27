@@ -9,6 +9,17 @@ sessions = database["sessions"]
 questions = database["questions"]
 
 # Create a new session
+from fastapi import HTTPException, Request
+from datetime import datetime
+from bson import ObjectId
+from utils.helper import *
+from models.session_model import *
+from config.database import database
+
+sessions = database["sessions"]
+questions = database["questions"]
+
+# Create a new session
 async def create_new_session(request: Request, data: SessionCreate):
     user = request.state.user
     
@@ -53,8 +64,9 @@ async def create_new_session(request: Request, data: SessionCreate):
         )
 
     # 3️⃣ Prepare API response (map _id → id)
-    response = {
-        "id": str(session_id),
+    # CHANGED: Wrap in "session" key for consistency
+    session_response = {
+        "_id": str(session_id),  # CHANGED: Use _id to match get_session_by_id
         "user": user["id"],
         "role": data.role,
         "experience": data.experience,
@@ -65,7 +77,8 @@ async def create_new_session(request: Request, data: SessionCreate):
         "updatedAt": now,
     }
 
-    return response
+    # CHANGED: Return consistent structure
+    return {"success": True, "session": session_response}
 
 # Get my sessions
 async def get_my_sessions(request: Request):
