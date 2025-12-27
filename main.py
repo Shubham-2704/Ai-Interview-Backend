@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config.database import lifespan
 from routes.auth_routes import router as auth_router
+from routes.session_routes import router as session_router
 from starlette.staticfiles import StaticFiles
 
 
@@ -21,6 +22,7 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Include Routers
 app.include_router(auth_router)
+app.include_router(session_router)
 
 
 @app.get("/")
