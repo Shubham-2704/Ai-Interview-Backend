@@ -2,3 +2,5 @@
 myenv
 __pycache__/
 uploads/
+requirements.txt
+README.md
