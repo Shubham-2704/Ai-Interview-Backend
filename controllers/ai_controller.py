@@ -1,17 +1,19 @@
 import os
 import re
 import json
+from utils.helper import *
+from utils.gemini_service import *
+from models.user_model import *
 import google.generativeai as genai
 from fastapi import HTTPException
+from utils.encryption import encrypt, mask_key, decrypt
+from config.database import database
+from fastapi import Request, Depends
+from middlewares.auth_middlewares import protect
+from utils.prompt import *
 
-from utils.prompt import (
-    question_answer_prompt,
-    concept_explain_prompt,
-)
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-2.5-flash")
-
+users = database["users"]
 
 def clean_ai_json(raw_text: str):
     """
@@ -59,37 +61,69 @@ def clean_ai_json(raw_text: str):
         except:
             raise ValueError(f"Could not parse JSON from AI response: {e}")
 
-
 # ---------- Generate Questions ----------
-async def generate_questions_service(body: dict):
-    role = body.get("role")
-    experience = body.get("experience")
-    topics = body.get("topicsToFocus")
-    count = body.get("numberOfQuestions")
+async def generate_questions_service(body: dict, user_id: str):
+    user = await users.find_one({"_id": ObjectId(user_id)})
+    if not user or "geminiApiKey" not in user:
+        raise HTTPException(400, "Gemini API key not configured")
 
-    if not all([role, experience, topics, count]):
-        raise HTTPException(400, "Missing required fields")
+    api_key = decrypt(user["geminiApiKey"])
 
-    prompt = question_answer_prompt(role, experience, topics, count)
+    prompt = question_answer_prompt(
+        body["role"],
+        body["experience"],
+        body["topicsToFocus"],
+        body["numberOfQuestions"]
+    )
 
-    try:
-        response = model.generate_content(prompt)
-        return clean_ai_json(response.text)
-    except Exception as e:
-        raise HTTPException(500, f"Failed to generate questions: {e}")
-
+    text = GeminiService.generate(api_key, prompt)
+    return clean_ai_json(text)
 
 # ---------- Generate Explanation ----------
-async def generate_explanation_service(body: dict):
+async def generate_explanation_service(body: dict, user_id: str):
     question = body.get("question")
-
     if not question:
-        raise HTTPException(400, "Missing required fields")
+        raise HTTPException(400, "Missing question")
 
+    user = await users.find_one({"_id": ObjectId(user_id)})
+    if not user or "geminiApiKey" not in user:
+        raise HTTPException(400, "Gemini API key not configured")
+
+    api_key = decrypt(user["geminiApiKey"])
     prompt = concept_explain_prompt(question)
 
+    text = GeminiService.generate(api_key, prompt)
+    return clean_ai_json(text)
+
+async def save_key(payload: UpdateGeminiKey, request: Request, user_data = Depends(protect)):
+    user_id = request.state.user["id"]
+
+    # validate key with a basic call
     try:
-        response = model.generate_content(prompt)
-        return clean_ai_json(response.text)
-    except Exception as e:
-        raise HTTPException(500, f"Failed to generate explanation: {e}")
+        genai.configure(api_key=payload.apiKey)
+        list(genai.list_models())
+    except Exception:
+        return error_response(400, "Invalid or unauthorized Gemini API key")
+
+    encrypted = encrypt(payload.apiKey)
+
+    await users.update_one(
+        {"_id": ObjectId(user_id)},
+        {"$set": {"geminiApiKey": encrypted}}
+    )
+
+    return {
+            "message": "API key saved successfully",
+            "geminiKeyMasked": mask_key(payload.apiKey),
+            "hasGeminiKey": True,
+            }
+
+async def delete_key(request: Request, user_data = Depends(protect)):
+    user_id = request.state.user["id"]
+
+    await users.update_one(
+        {"_id": ObjectId(user_id)},
+        {"$unset": {"geminiApiKey": ""}}
+    )
+
+    return {"message": "API key removed successfully"}
