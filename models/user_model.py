@@ -12,6 +12,7 @@ class UserCreate(BaseModel):
     password: str
     profileImageUrl: Optional[str] = None
     adminInviteToken: Optional[str] = None
+    geminiApiKey: Optional[str] = None
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -25,3 +26,8 @@ class UserResponse(BaseModel):
     token: str
     createdAt: datetime
     updatedAt: datetime
+    hasGeminiKey: bool = False
+    geminiKeyMasked: Optional[str] = None
+
+class UpdateGeminiKey(BaseModel):
+    apiKey: str
