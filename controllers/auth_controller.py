@@ -134,3 +134,49 @@ async def get_profile(request: Request, user_data = Depends(protect)):
         "geminiKeyMasked": masked
     }
 
+# Update User Profile
+async def update_profile(request: Request, data: UserProfileUpdate, user_data = Depends(protect)):
+    user_id = request.state.user["id"]
+
+    user_obj = await users.find_one({"_id": ObjectId(user_id)})
+    if not user_obj:
+        return error_response(404, "User not found")
+
+    update_fields = {"updatedAt": datetime.now(timezone.utc)}
+
+    if data.name is not None:
+        update_fields["name"] = data.name
+    if data.email is not None and data.email != user_obj["email"]:
+        # Check if new email already exists
+        if await users.find_one({"email": data.email, "_id": {"$ne": ObjectId(user_id)}}):
+            return error_response(400, "Email already registered")
+        update_fields["email"] = data.email
+    if data.profileImageUrl is not None:
+        update_fields["profileImageUrl"] = data.profileImageUrl
+
+    await users.update_one(
+        {"_id": ObjectId(user_id)},
+        {"$set": update_fields}
+    )
+
+    updated_user = await users.find_one({"_id": ObjectId(user_id)}, {"password": 0})
+    
+    gemini_key = updated_user.get("geminiApiKey")
+    masked = None
+
+    if gemini_key:
+        try:
+            masked = mask_key(decrypt(gemini_key))
+        except:
+            masked = None
+
+    return {
+        "id": str(updated_user["_id"]),
+        "name": updated_user["name"],
+        "email": updated_user["email"],
+        "profileImageUrl": updated_user.get("profileImageUrl"),
+        "createdAt": updated_user.get("createdAt"),
+        "updatedAt": updated_user.get("updatedAt"),
+        "hasGeminiKey": bool(gemini_key),
+        "geminiKeyMasked": masked
+    }

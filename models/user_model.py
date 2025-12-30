@@ -31,3 +31,8 @@ class UserResponse(BaseModel):
 
 class UpdateGeminiKey(BaseModel):
     apiKey: str
+
+class UserProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    profileImageUrl: Optional[str] = None
