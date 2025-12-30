@@ -26,7 +26,7 @@ async def generate_explanation(
 
 @router.post("/api-key")
 async def save_gemini_key(
-    payload,
+    payload : UpdateGeminiKey,
     request: Request,
     user_data=Depends(protect)
 ):
@@ -39,4 +39,3 @@ async def delete_gemini_key(
     user_data=Depends(protect)
 ):
     return await delete_key(request)
-
