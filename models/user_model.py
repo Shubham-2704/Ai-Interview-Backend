@@ -36,3 +36,14 @@ class UserProfileUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
     profileImageUrl: Optional[str] = None
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class VerifyOtpRequest(BaseModel):
+    email: EmailStr
+    otp: str
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    newPassword: str
