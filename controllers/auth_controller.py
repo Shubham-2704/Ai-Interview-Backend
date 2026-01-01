@@ -5,11 +5,13 @@ from models.user_model import *
 from utils.hash import hash_password, verify_password
 from utils.auth import generate_token
 from utils.helper import error_response
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 from utils.encryption import encrypt, decrypt, mask_key
 import google.generativeai as genai
-
+from utils.helper import *
+from utils.otp import *
+from utils.email import *
 
 users = database["users"]
 
@@ -149,7 +151,7 @@ async def update_profile(request: Request, data: UserProfileUpdate, user_data = 
     if data.email is not None and data.email != user_obj["email"]:
         # Check if new email already exists
         if await users.find_one({"email": data.email, "_id": {"$ne": ObjectId(user_id)}}):
-            return error_response(400, "Email already registered")
+            return error_response(400, "Email already registered, use a different email.")
         update_fields["email"] = data.email
     if data.profileImageUrl is not None:
         update_fields["profileImageUrl"] = data.profileImageUrl
@@ -180,3 +182,115 @@ async def update_profile(request: Request, data: UserProfileUpdate, user_data = 
         "hasGeminiKey": bool(gemini_key),
         "geminiKeyMasked": masked
     }
+
+reset_otps = database["password_reset_otps"]
+async def forgot_password(data: ForgotPasswordRequest):
+    user = await users.find_one({"email": data.email})
+    if not user:
+        return error_response(404, "User not found")
+
+    now = datetime.now(timezone.utc)
+
+    # 🛑 BLOCK CHECK
+    existing = await reset_otps.find_one({"userId": user["_id"]})
+    if existing and existing.get("blockedUntil"):
+        blocked_until = existing["blockedUntil"]
+        if blocked_until.tzinfo is None:
+            blocked_until = blocked_until.replace(tzinfo=timezone.utc)
+
+        if now < blocked_until:
+            minutes_left = int((blocked_until - now).total_seconds() / 60)
+            return error_response(
+                429,
+                f"Too many attempts. Try again after {minutes_left} minutes"
+            )
+
+    otp = generate_otp()
+    now = datetime.now(timezone.utc)
+
+    await reset_otps.update_one(
+        {"userId": user["_id"]},
+        {
+            "$set": {
+                "userId": user["_id"],
+                "email": user["email"],
+                "otp": hash_password(otp),
+                "expiresAt": now + timedelta(minutes=5),  # ✅ 5 MIN
+                "attempts": 0,
+                "blockedUntil": None,
+                "createdAt": now
+            }
+        },
+        upsert=True
+    )
+
+    send_otp_email(
+        to_email=user["email"],
+        user_name=user["name"],
+        otp=otp,
+        expiry_minutes=5
+    )
+
+    return {
+        "message": "OTP sent to your email",
+        "expiresIn": 300  # seconds
+    }
+
+MAX_ATTEMPTS = 3
+BLOCK_DURATION = timedelta(hours=1)
+
+async def verify_reset_otp(data: VerifyOtpRequest):
+    record = await reset_otps.find_one({"email": data.email})
+    if not record:
+        return error_response(400, "OTP expired or invalid")
+
+    now = datetime.now(timezone.utc)
+
+    # 🛑 BLOCK CHECK
+    blocked_until = record.get("blockedUntil")
+    if blocked_until:
+        if blocked_until.tzinfo is None:
+            blocked_until = blocked_until.replace(tzinfo=timezone.utc)
+
+        if now < blocked_until:
+            minutes_left = int((blocked_until - now).total_seconds() / 60)
+            return error_response(
+                429,
+                f"Try again after {minutes_left} minutes"
+            )
+
+    # ❌ WRONG OTP
+    if not verify_password(data.otp, record["otp"]):
+        attempts = record.get("attempts", 0) + 1
+        update = {"attempts": attempts}
+
+        if attempts >= MAX_ATTEMPTS:
+            update["blockedUntil"] = now + BLOCK_DURATION
+
+
+        await reset_otps.update_one(
+            {"_id": record["_id"]},
+            {"$set": update}
+        )
+
+        return error_response(400, "Invalid OTP")
+
+    return success_response("OTP verified successfully")
+
+async def reset_password(data: ResetPasswordRequest):
+    record = await reset_otps.find_one({"email": data.email})
+    user = await users.find_one({"email": data.email})
+    if verify_password(data.newPassword, user["password"]):
+        return error_response(400, "New password cannot be the same as the old password")
+    await users.update_one(
+        {"email": data.email},
+        {"$set": {
+            "password": hash_password(data.newPassword),
+            "updatedAt": datetime.now(timezone.utc)
+        }}
+    )
+
+    # 🧹 DELETE OTP RECORD
+    await reset_otps.delete_one({"_id": record["_id"]})
+
+    return success_response("Password reset successfully")
