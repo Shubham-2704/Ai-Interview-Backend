@@ -22,7 +22,7 @@ def send_otp_email(
     )
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = "TaskFlow - OTP Verification"
+    msg["Subject"] = "Intervia - OTP Verification"
     msg["From"] = os.getenv("EMAIL_FROM")
     msg["To"] = to_email
 

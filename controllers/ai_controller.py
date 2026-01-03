@@ -4,7 +4,7 @@ import json
 from utils.helper import *
 from utils.gemini_service import *
 from models.user_model import *
-import google.generativeai as genai
+from google import genai
 from fastapi import HTTPException
 from utils.encryption import encrypt, mask_key, decrypt
 from config.database import database
@@ -82,6 +82,8 @@ async def generate_questions_service(body: dict, user_id: str):
 # ---------- Generate Explanation ----------
 async def generate_explanation_service(body: dict, user_id: str):
     question = body.get("question")
+    experience = body.get("experience")
+    
     if not question:
         raise HTTPException(400, "Missing question")
 
@@ -90,7 +92,7 @@ async def generate_explanation_service(body: dict, user_id: str):
         raise HTTPException(400, "Gemini API key not configured")
 
     api_key = decrypt(user["geminiApiKey"])
-    prompt = concept_explain_prompt(question)
+    prompt = concept_explain_prompt(question, experience)
 
     text = GeminiService.generate(api_key, prompt)
     return clean_ai_json(text)
@@ -100,8 +102,8 @@ async def save_key(payload: UpdateGeminiKey, request: Request, user_data = Depen
 
     # validate key with a basic call
     try:
-        genai.configure(api_key=payload.apiKey)
-        list(genai.list_models())
+        client = genai.Client(api_key=payload.apiKey)
+        list(client.models.list())
     except Exception:
         return error_response(400, "Invalid or unauthorized Gemini API key")
 
@@ -127,3 +129,22 @@ async def delete_key(request: Request, user_data = Depends(protect)):
     )
 
     return {"message": "API key removed successfully"}
+
+async def followup_chat_service(body: dict, user_id: str):
+    context = body.get("context")
+    question = body.get("question")
+
+    if not context or not question:
+        raise HTTPException(400, "Missing context or question")
+
+    user = await users.find_one({"_id": ObjectId(user_id)})
+    if not user or "geminiApiKey" not in user:
+        raise HTTPException(400, "Gemini API key not configured")
+
+    api_key = decrypt(user["geminiApiKey"])
+
+    prompt = followup_chat_prompt(context, question)
+
+    text = GeminiService.generate(api_key, prompt)
+
+    return clean_ai_json(text)
