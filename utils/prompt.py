@@ -2,12 +2,24 @@ def question_answer_prompt(role, experience, topics_to_focus, number_of_question
     return f"""
 You are an AI trained to generate technical interview questions and answers.
 
+CRITICAL JSON RULES (MUST FOLLOW):
+- Output MUST be valid JSON that can be parsed by `json.loads`
+- Do NOT include markdown fences like ```json or ```
+- Do NOT include comments
+- Do NOT include trailing commas
+- Use ONLY double quotes for strings
+- Escape all newlines as \\n
+- Escape all quotes inside strings as \\"
+- Do NOT add any text before or after the JSON
+- Validate the JSON before responding
+
 Task:
 - Role: {role}
 - Candidate Experience: {experience} years
 - Focus Topics: {topics_to_focus}
 - Write {number_of_questions} interview questions.
-- For each question, generate a detailed but beginner-friendly answer.
+- For each question, generate a detailed answer tailored to a candidate with {experience} years of experience.
+- Adjust depth, terminology, and examples according to the experience level.
 - If the answer needs a code example, ALWAYS wrap it in markdown code blocks with language.
 - Keep formatting very clean.
 
@@ -22,12 +34,23 @@ Return a pure JSON array like:
 Important: Do NOT add any extra text. Only return valid JSON.
 """
 
-def concept_explain_prompt(question):
+def concept_explain_prompt(question, experience):
     return f"""
 You are an AI trained to generate explanations for interview questions.
 
+CRITICAL JSON RULES (MUST FOLLOW):
+- Output MUST be valid JSON
+- No markdown fences
+- No comments
+- No trailing commas
+- Use only double quotes
+- Escape newlines as \\n
+- Escape quotes as \\"
+- Do NOT add any text outside the JSON
+- Validate JSON before responding
+
 Task:
-- Explain the following interview question in depth for a beginner.
+- Explain the following interview question in depth for a candidate with {experience} years of experience.
 - Question: "{question}"
 - Provide a short and clear title.
 - If the explanation includes a code example, ALWAYS use markdown code blocks with language.
@@ -40,3 +63,82 @@ Return a valid JSON object like:
 
 Important: Do NOT add any extra text outside the JSON.
 """
+def followup_chat_prompt(context, question):
+    # Different responses each time
+    dynamic_responses = [
+        "I need to stay within the explanation provided, which doesn't cover that topic.",
+        "That concept isn't included in the explanation above.",
+        "The explanation doesn't address that particular point.",
+        "For this session, I'm limited to discussing what's in the explanation.",
+        "That's outside what's covered in the explanation provided."
+    ]
+    
+    # Simple selection based on question
+    response_index = len(question) % len(dynamic_responses)
+    dynamic_response = dynamic_responses[response_index]
+    
+    return f"""
+You are an AI tutor.
+
+CRITICAL JSON RULES (MUST FOLLOW):
+- Output MUST be valid JSON
+- No markdown fences
+- No trailing commas
+- No comments
+- Escape newlines as \\n
+- Escape quotes as \\"
+- Return ONLY JSON
+
+Answer the user's question ONLY using the explanation below.
+Do NOT introduce unrelated concepts or external knowledge.
+
+**CONTEXT MATCHING RULE:**
+- If 70% or more of the question relates to the explanation → Answer from context
+- If less than 70% relates to the explanation → Use the dynamic response below
+- If the question mixes related/unrelated parts → Answer ONLY the related parts
+
+**DYNAMIC RESPONSE (use when less than 70% match):**
+"{dynamic_response}"
+
+--- Explanation Context ---
+{context}
+
+--- User Question ---
+{question}
+
+**EXAMPLES:**
+1. Question is 80% about "inheritance" and context covers OOP → Answer from context
+2. Question is 50% about "React hooks" but context is about basics → Use dynamic response
+3. Question has both related and unrelated parts → Answer only the related 70%+ parts
+
+Return a valid JSON object like:
+{{
+  "answer": "Your response here."
+}}
+
+Important: Do NOT add anything outside JSON.
+When using dynamic response, use it EXACTLY as shown.
+"""
+# def followup_chat_prompt(context, question):
+#     return f"""
+# You are an AI tutor.
+
+# Answer the user's question ONLY using the explanation below.
+# Do NOT introduce unrelated concepts.
+# If the answer is not present in the explanation, reply:
+
+# "I’m sorry — this concept is not covered in the explanation above."
+
+# --- Explanation Context ---
+# {context}
+
+# --- User Question ---
+# {question}
+
+# Return a valid JSON object like:
+# {{
+#   "answer": "Short clear answer here."
+# }}
+
+# Important: Do NOT add anything outside JSON.
+# """

@@ -8,7 +8,7 @@ from utils.helper import error_response
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 from utils.encryption import encrypt, decrypt, mask_key
-import google.generativeai as genai
+from google import genai
 from utils.helper import *
 from utils.otp import *
 from utils.email import *
@@ -28,8 +28,8 @@ async def register_user(data: UserCreate):
     # If user provided a Gemini key at signup, validate & encrypt it
     if data.geminiApiKey:
         try:
-            genai.configure(api_key=data.geminiApiKey)
-            list(genai.list_models())   # basic validation call
+            client = genai.Client(api_key=data.geminiApiKey)
+            list(client.models.list())   # basic validation call
         except Exception:
             return error_response(400, "Invalid or unauthorized Gemini API key")
 

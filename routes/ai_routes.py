@@ -39,3 +39,12 @@ async def delete_gemini_key(
     user_data=Depends(protect)
 ):
     return await delete_key(request)
+
+@router.post("/followup-chat")
+async def followup_chat(
+    body: dict,
+    request: Request,
+    user_data = Depends(protect)
+):
+    user_id = request.state.user["id"]
+    return await followup_chat_service(body, user_id)
