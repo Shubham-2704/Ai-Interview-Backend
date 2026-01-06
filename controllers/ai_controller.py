@@ -148,3 +148,22 @@ async def followup_chat_service(body: dict, user_id: str):
     text = GeminiService.generate(api_key, prompt)
 
     return clean_ai_json(text)
+
+async def ai_grammar_correct_service(text: str, user_id: str):
+    print("AI GRAMMAR CORRECT SERVICE CALLED WITH TEXT:", text)
+
+    user = await users.find_one({"_id": ObjectId(user_id)})
+    print("user:", user)
+
+    if not user or "geminiApiKey" not in user:
+        raise HTTPException(400, "Gemini key not configured")
+
+    api_key = decrypt(user["geminiApiKey"])
+
+    prompt = grammar_fix_prompt(text)
+
+    response = GeminiService.generate(api_key, prompt)
+
+    print("GEMINI RAW RESPONSE:", response, type(response))
+
+    return {"correctedText": response}

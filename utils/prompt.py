@@ -142,3 +142,22 @@ When using dynamic response, use it EXACTLY as shown.
 
 # Important: Do NOT add anything outside JSON.
 # """
+
+def grammar_fix_prompt(text):
+    return f"""
+You are an AI assistant that converts informal or broken user input
+into a clear, grammatically correct, well-formed question or prompt.
+
+Rules:
+- Preserve the original intent and meaning
+- Fix grammar, spelling, tense, and punctuation
+- Improve clarity and sentence structure if needed
+- Convert fragments into a complete natural sentence
+- Do NOT answer the question
+- Do NOT add new information
+- Return ONLY the corrected prompt
+
+User input:
+{text}
+"""
+
