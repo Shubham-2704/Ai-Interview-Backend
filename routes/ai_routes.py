@@ -48,3 +48,10 @@ async def followup_chat(
 ):
     user_id = request.state.user["id"]
     return await followup_chat_service(body, user_id)
+
+@router.post("/ai-correct")
+async def ai_correct(body: dict, request: Request, user = Depends(protect)):
+    user_id = request.state.user["id"]
+    text = body.get("text")
+
+    return await ai_grammar_correct_service(text, user_id)
