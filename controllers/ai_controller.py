@@ -11,7 +11,8 @@ from config.database import database
 from fastapi import Request, Depends
 from middlewares.auth_middlewares import protect
 from utils.prompt import *
-
+from google.genai.errors import ServerError, ClientError
+from google.api_core.exceptions import ResourceExhausted, PermissionDenied, TooManyRequests
 
 users = database["users"]
 
@@ -68,6 +69,7 @@ async def generate_questions_service(body: dict, user_id: str):
         raise HTTPException(400, "Gemini API key not configured")
 
     api_key = decrypt(user["geminiApiKey"])
+    print("Decrypted API key",api_key)
 
     prompt = question_answer_prompt(
         body["role"],
@@ -76,31 +78,62 @@ async def generate_questions_service(body: dict, user_id: str):
         body["numberOfQuestions"]
     )
 
-    text = GeminiService.generate(api_key, prompt)
+    try:
+        text = GeminiService.generate(api_key, prompt)
+
+    except ResourceExhausted:
+        return JSONResponse(status_code=403, content={"message": "Free-tier quota exceeded. Please try again later."})
+    except PermissionDenied:
+        return JSONResponse(status_code=403, content={"message": "Invalid Gemini API key"})  
+    except ServerError:
+        return JSONResponse(status_code=500, content={"message": "The model is overloaded. Please try again later."})
+    except TooManyRequests:
+        return JSONResponse(status_code=429, content={"message": "Too many requests. Please slow down and try again."})
+    except ClientError as e:
+        if "RESOURCE_EXHAUSTED" in str(e):
+            return JSONResponse(
+                status_code=403,
+                content={"message": "Free-tier quota exceeded. Please try again later."}
+            )
+    
     return clean_ai_json(text)
 
 # ---------- Generate Explanation ----------
 async def generate_explanation_service(body: dict, user_id: str):
+    user = await users.find_one({"_id": ObjectId(user_id)})
     question = body.get("question")
     experience = body.get("experience")
     
     if not question:
-        raise HTTPException(400, "Missing question")
-
-    user = await users.find_one({"_id": ObjectId(user_id)})
+        return JSONResponse(status_code=400, content={"message": "Missing question"})
     if not user or "geminiApiKey" not in user:
-        raise HTTPException(400, "Gemini API key not configured")
+        return JSONResponse(status_code=400, content={"message": "Gemini API key not configured"})
 
     api_key = decrypt(user["geminiApiKey"])
     prompt = concept_explain_prompt(question, experience)
 
-    text = GeminiService.generate(api_key, prompt)
+    try:
+        text = GeminiService.generate(api_key, prompt)
+    except ResourceExhausted:
+        return JSONResponse(status_code=403, content={"message": "Gemini API quota limit exceeded"})
+    except PermissionDenied:
+        return JSONResponse(status_code=403, content={"message": "Invalid Gemini API key"})  
+    except ServerError:
+        return JSONResponse(status_code=500, content={"message": "The model is overloaded. Please try again later."})
+    except TooManyRequests:
+        return JSONResponse(status_code=429, content={"message": "Too many requests. Please slow down and try again."})
+    except ClientError as e:
+        if "RESOURCE_EXHAUSTED" in str(e):
+            return JSONResponse(
+                status_code=403,
+                content={"message": "Free-tier quota exceeded. Please try again later."}
+            )
+
     return clean_ai_json(text)
 
 async def save_key(payload: UpdateGeminiKey, request: Request, user_data = Depends(protect)):
     user_id = request.state.user["id"]
-
-    # validate key with a basic call
+    
     try:
         client = genai.Client(api_key=payload.apiKey)
         list(client.models.list())
@@ -113,9 +146,8 @@ async def save_key(payload: UpdateGeminiKey, request: Request, user_data = Depen
         {"_id": ObjectId(user_id)},
         {"$set": {"geminiApiKey": encrypted}}
     )
-
     return {
-            "message": "API key saved successfully",
+            "message": "API key saved successfully!",
             "geminiKeyMasked": mask_key(payload.apiKey),
             "hasGeminiKey": True,
             }
@@ -127,43 +159,65 @@ async def delete_key(request: Request, user_data = Depends(protect)):
         {"_id": ObjectId(user_id)},
         {"$unset": {"geminiApiKey": ""}}
     )
-
-    return {"message": "API key removed successfully"}
+    return {"message": "API key removed successfully!"}
 
 async def followup_chat_service(body: dict, user_id: str):
+    user = await users.find_one({"_id": ObjectId(user_id)})
     context = body.get("context")
     question = body.get("question")
 
     if not context or not question:
         raise HTTPException(400, "Missing context or question")
-
-    user = await users.find_one({"_id": ObjectId(user_id)})
     if not user or "geminiApiKey" not in user:
-        raise HTTPException(400, "Gemini API key not configured")
+        return JSONResponse(status_code=400, content={"message": "Gemini API key not configured"})
 
     api_key = decrypt(user["geminiApiKey"])
-
     prompt = followup_chat_prompt(context, question)
 
-    text = GeminiService.generate(api_key, prompt)
+    try:
+        text = GeminiService.generate(api_key, prompt)
+    except ResourceExhausted:
+        return JSONResponse(status_code=403, content={"message": "Gemini API quota limit exceeded"})
+    except PermissionDenied:
+        return JSONResponse(status_code=403, content={"message": "Invalid Gemini API key"})
+    except ServerError:
+        return JSONResponse(status_code=500, content={"message": "The model is overloaded. Please try again later."})
+    except TooManyRequests:
+        return JSONResponse(status_code=429, content={"message": "Too many requests. Please slow down and try again."})
+    except ClientError as e:
+        if "RESOURCE_EXHAUSTED" in str(e):
+            return JSONResponse(
+                status_code=403,
+                content={"message": "Free-tier quota exceeded. Please try again later."}
+            )
 
     return clean_ai_json(text)
 
 async def ai_grammar_correct_service(text: str, user_id: str):
-    print("AI GRAMMAR CORRECT SERVICE CALLED WITH TEXT:", text)
-
     user = await users.find_one({"_id": ObjectId(user_id)})
-    print("user:", user)
 
     if not user or "geminiApiKey" not in user:
-        raise HTTPException(400, "Gemini key not configured")
+        return JSONResponse(status_code=400, content={"message": "Gemini key not configured"})
 
     api_key = decrypt(user["geminiApiKey"])
-
     prompt = grammar_fix_prompt(text)
 
-    response = GeminiService.generate(api_key, prompt)
-
-    print("GEMINI RAW RESPONSE:", response, type(response))
-
+    try:
+        response = GeminiService.generate(api_key, prompt)
+    except ResourceExhausted:
+        return JSONResponse(status_code=403, content={"message": "Gemini API quota limit exceeded"})
+    except PermissionDenied:
+        return JSONResponse(status_code=403, content={"message": "Invalid Gemini API key"})
+    except ServerError:
+        return JSONResponse(status_code=500, content={"message": "The model is overloaded. Please try again later."})
+    except TooManyRequests:
+        return JSONResponse(status_code=429, content={"message": "Too many requests. Please slow down and try again."})
+    except ClientError as e:
+        if "RESOURCE_EXHAUSTED" in str(e):
+            return JSONResponse(
+                status_code=403,
+                content={"message": "Free-tier quota exceeded. Please try again later."}
+            )
+    
     return {"correctedText": response}
+    
