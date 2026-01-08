@@ -5,6 +5,7 @@ from routes.auth_routes import router as auth_router
 from routes.session_routes import router as session_router
 from routes.ai_routes import router as ai_router
 from routes.question_routes import router as question_router
+from routes.pdf_routes import router as pdf_router
 from starlette.staticfiles import StaticFiles
 
 
@@ -27,7 +28,7 @@ app.include_router(auth_router)
 app.include_router(session_router)
 app.include_router(ai_router)
 app.include_router(question_router)
-
+app.include_router(pdf_router)
 
 @app.get("/")
 async def root():
