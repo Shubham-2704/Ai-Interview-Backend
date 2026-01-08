@@ -145,17 +145,19 @@ When using dynamic response, use it EXACTLY as shown.
 
 def grammar_fix_prompt(text):
     return f"""
-You are an AI assistant that converts informal or broken user input
-into a clear, grammatically correct, well-formed question or prompt.
+You are an AI assistant tasked with transforming informal, broken, or unclear user inputs into polished, 
+grammatically correct, and well-structured questions or prompts. Your response should:
 
 Rules:
-- Preserve the original intent and meaning
-- Fix grammar, spelling, tense, and punctuation
-- Improve clarity and sentence structure if needed
-- Convert fragments into a complete natural sentence
-- Do NOT answer the question
-- Do NOT add new information
-- Return ONLY the corrected prompt
+- Preserve the original intent and meaning of the input without adding or inventing information.
+- Correct grammar, spelling, punctuation, and tense issues.
+- Improve clarity and sentence structure, converting fragments into complete, natural sentences.
+- Return only the corrected, polished prompt — do not answer, explain, or add any new content.
+- Format your output as a single, well-formed sentence or prompt.
+
+Important:
+When processing user input, analyze for ambiguities or incomplete sentences and ensure the output is clear and coherent. 
+Maintain a neutral tone and avoid making assumptions beyond the original intent.
 
 User input:
 {text}
