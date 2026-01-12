@@ -16,51 +16,51 @@ from google.api_core.exceptions import ResourceExhausted, PermissionDenied, TooM
 
 users = database["users"]
 
-def clean_ai_json(raw_text: str):
-    """
-    Removes ```json and ``` fences and safely parses JSON
-    """
-    if not raw_text:
-        raise ValueError("Empty AI response")
+# def clean_ai_json(raw_text: str):
+#     """
+#     Removes ```json and ``` fences and safely parses JSON
+#     """
+#     if not raw_text:
+#         raise ValueError("Empty AI response")
 
-    # Clean the text
-    cleaned = raw_text.strip()
+#     # Clean the text
+#     cleaned = raw_text.strip()
     
-    # Remove JSON code fences
-    if cleaned.startswith("```json"):
-        cleaned = cleaned[7:]
-    elif cleaned.startswith("```"):
-        cleaned = cleaned[3:]
+#     # Remove JSON code fences
+#     if cleaned.startswith("```json"):
+#         cleaned = cleaned[7:]
+#     elif cleaned.startswith("```"):
+#         cleaned = cleaned[3:]
     
-    if cleaned.endswith("```"):
-        cleaned = cleaned[:-3]
+#     if cleaned.endswith("```"):
+#         cleaned = cleaned[:-3]
     
-    cleaned = cleaned.strip()
+#     cleaned = cleaned.strip()
     
-    try:
-        # Parse JSON
-        parsed = json.loads(cleaned)
+#     try:
+#         # Parse JSON
+#         parsed = json.loads(cleaned)
         
-        # Fix code blocks in answers (replace escaped \n with actual newlines)
-        if isinstance(parsed, list):
-            for item in parsed:
-                if "answer" in item:
-                    # This helps preserve code block formatting
-                    item["answer"] = item["answer"].replace('\\n', '\n')
-        elif isinstance(parsed, dict):
-            if "explanation" in parsed:
-                parsed["explanation"] = parsed["explanation"].replace('\\n', '\n')
+#         # Fix code blocks in answers (replace escaped \n with actual newlines)
+#         if isinstance(parsed, list):
+#             for item in parsed:
+#                 if "answer" in item:
+#                     # This helps preserve code block formatting
+#                     item["answer"] = item["answer"].replace('\\n', '\n')
+#         elif isinstance(parsed, dict):
+#             if "explanation" in parsed:
+#                 parsed["explanation"] = parsed["explanation"].replace('\\n', '\n')
         
-        return parsed
-    except json.JSONDecodeError as e:
-        # Try one more time with aggressive cleaning
-        cleaned = re.sub(r'^[^{[]*', '', cleaned)  # Remove anything before {
-        cleaned = re.sub(r'[^}\]]*$', '', cleaned)  # Remove anything after }
+#         return parsed
+#     except json.JSONDecodeError as e:
+#         # Try one more time with aggressive cleaning
+#         cleaned = re.sub(r'^[^{[]*', '', cleaned)  # Remove anything before {
+#         cleaned = re.sub(r'[^}\]]*$', '', cleaned)  # Remove anything after }
         
-        try:
-            return json.loads(cleaned)
-        except:
-            raise ValueError(f"Could not parse JSON from AI response: {e}")
+#         try:
+#             return json.loads(cleaned)
+#         except:
+#             raise ValueError(f"Could not parse JSON from AI response: {e}")
 
 # ---------- Generate Questions ----------
 async def generate_questions_service(body: dict, user_id: str):
@@ -96,7 +96,7 @@ async def generate_questions_service(body: dict, user_id: str):
                 content={"message": "Free-tier quota exceeded. Please try again later."}
             )
     
-    return clean_ai_json(text)
+    return parse_gemini_json_response(text)
 
 # ---------- Generate Explanation ----------
 async def generate_explanation_service(body: dict, user_id: str):
@@ -129,7 +129,7 @@ async def generate_explanation_service(body: dict, user_id: str):
                 content={"message": "Free-tier quota exceeded. Please try again later."}
             )
 
-    return clean_ai_json(text)
+    return parse_gemini_json_response(text)
 
 async def save_key(payload: UpdateGeminiKey, request: Request, user_data = Depends(protect)):
     user_id = request.state.user["id"]
@@ -191,7 +191,7 @@ async def followup_chat_service(body: dict, user_id: str):
                 content={"message": "Free-tier quota exceeded. Please try again later."}
             )
 
-    return clean_ai_json(text)
+    return parse_gemini_json_response(text)
 
 async def ai_grammar_correct_service(text: str, user_id: str):
     user = await users.find_one({"_id": ObjectId(user_id)})

@@ -12,7 +12,7 @@ from config.database import database
 from models.study_material_model import *
 from models.user_model import *
 from middlewares.auth_middlewares import protect
-from utils.gemini_service import GeminiService
+from utils.gemini_service import *
 
 # Collections
 study_materials = database["study_materials"]
@@ -138,38 +138,45 @@ async def generate_study_materials_with_ai(
     """Use Gemini AI to generate search queries and analyze results"""
     
     try:
+        print(f"🔍 Step 1: Generating search queries for: {question}")
         # Step 1: Generate search queries from the question        
         search_prompt = study_materials_search_queries_prompt(question, role, experience)
-        
         # Use GeminiService instead of direct genai calls
         query_response = GeminiService.generate(user_gemini_key, search_prompt)
+        print(f"🤖 Raw Gemini response: {query_response}")
         
-        # Parse search queries from response
-        search_queries = json.loads(query_response)
+        # Parse with markdown handling
+        search_queries = parse_gemini_json_response(query_response, fix_newlines=False)
+        print(f"✅ Parsed {len(search_queries)} search queries: {search_queries}")
         
         # Step 2: Search for each query
         all_results = []
-        for query in search_queries[:3]:  # Limit to 3 queries
+        for query in search_queries[:3]:
+            print(f"🔎 Searching for: {query}")
             results = await search_with_tavily(f"{query} {role} interview preparation", max_results=3)
             all_results.extend(results)
+        
+        print(f"📊 Found {len(all_results)} search results")
         
         # Step 3: Categorize and deduplicate
         categorized = await _categorize_materials(all_results)
         
         # Step 4: Let AI select best resources
-        
+        print("🤖 Step 4: AI selecting best resources...")
         selection_prompt = study_materials_selection_prompt(question, role, experience, categorized)
         
-        # Use GeminiService instead of direct genai calls
         selection_response = GeminiService.generate(user_gemini_key, selection_prompt)
         
-        selected_materials = json.loads(selection_response)
+        # Parse selection response
+        selected_materials = parse_gemini_json_response(selection_response,  fix_newlines=True)
         
-        # Count total sources - EXCLUDE keywords array
+        # Count total sources
         material_categories = ["youtube_links", "articles", "documentation", 
                               "practice_links", "books", "courses"]
         total_sources = sum(len(selected_materials.get(cat, [])) 
                            for cat in material_categories)
+        
+        print(f"🎉 Generated {total_sources} total resources")
         
         return {
             **selected_materials,
@@ -178,12 +185,14 @@ async def generate_study_materials_with_ai(
         }
         
     except Exception as e:
-        print(f"AI generation error: {e}")
+        print(f"❌ AI generation error: {e}")
+        import traceback
+        traceback.print_exc()
+        
         # Fallback to basic search
         results = await search_with_tavily(f"{question} {role} interview tutorial", max_results=10)
         categorized = await _categorize_materials(results)
         
-        # Fix fallback total_sources calculation
         material_categories = ["youtube_links", "articles", "documentation", 
                               "practice_links", "books", "courses"]
         total_sources = sum(len(categorized.get(cat, [])) 

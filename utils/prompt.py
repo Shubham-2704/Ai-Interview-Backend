@@ -170,6 +170,14 @@ User input:
 def study_materials_search_queries_prompt(question: str, role: str, experience: str) -> str:
     """Prompt for generating search queries for study materials"""
     return f"""
+CRITICAL INSTRUCTIONS:
+1. You MUST return ONLY a valid JSON array
+2. NO markdown code fences (no ```json or ```)
+3. NO additional text before or after the JSON
+4. NO explanations, comments, or notes
+5. The response must be parseable by json.loads()
+
+Task:
 Given this interview question: "{question}"
 For a {role} role with {experience} years experience.
 
@@ -181,10 +189,11 @@ Focus on:
 4. Practice platforms (LeetCode, etc.)
 5. Recommended books/courses
 
-Format as a JSON array of strings.
-Example: ["JavaScript closures tutorial", "React useEffect documentation", "System design interview preparation"]
+Return EXACTLY this format (no other text):
+["query1", "query2", "query3", "query4", "query5"]
 
-IMPORTANT: Return ONLY valid JSON array. No additional text.
+Example (for demonstration only):
+["JavaScript closures tutorial", "React useEffect documentation", "System design interview preparation"]
 """
 
 def study_materials_selection_prompt(question: str, role: str, experience: str, categorized_results: Dict[str, Any]) -> str:
