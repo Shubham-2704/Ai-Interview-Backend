@@ -1,3 +1,7 @@
+import json
+from typing import Any, Dict
+
+
 def question_answer_prompt(role, experience, topics_to_focus, number_of_questions):
     return f"""
 You are an AI trained to generate technical interview questions and answers.
@@ -163,3 +167,50 @@ User input:
 {text}
 """
 
+def study_materials_search_queries_prompt(question: str, role: str, experience: str) -> str:
+    """Prompt for generating search queries for study materials"""
+    return f"""
+Given this interview question: "{question}"
+For a {role} role with {experience} years experience.
+
+Generate 3-5 specific search queries to find the best learning resources online.
+Focus on:
+1. YouTube tutorial videos
+2. Technical articles/blogs
+3. Official documentation
+4. Practice platforms (LeetCode, etc.)
+5. Recommended books/courses
+
+Format as a JSON array of strings.
+Example: ["JavaScript closures tutorial", "React useEffect documentation", "System design interview preparation"]
+
+IMPORTANT: Return ONLY valid JSON array. No additional text.
+"""
+
+def study_materials_selection_prompt(question: str, role: str, experience: str, categorized_results: Dict[str, Any]) -> str:
+    """Prompt for selecting the best study materials from search results"""
+    return f"""
+Interview Question: "{question}"
+Role: {role} ({experience} years)
+
+Here are found resources categorized:
+{json.dumps(categorized_results, indent=2)}
+
+Select the BEST 2-3 resources from EACH category that are most relevant.
+Remove duplicates and low-quality links.
+Ensure all URLs are valid and accessible.
+
+Return JSON with this structure:
+{{
+    "youtube_links": [{{"title": "...", "url": "...", "duration": "..."}}],
+    "articles": [{{"title": "...", "url": "...", "source": "..."}}],
+    "documentation": [{{"title": "...", "url": "...", "framework": "..."}}],
+    "practice_links": [{{"title": "...", "url": "...", "platform": "..."}}],
+    "books": [{{"title": "...", "author": "...", "link": "..."}}],
+    "courses": [{{"title": "...", "url": "...", "platform": "..."}}],
+    "keywords": ["keyword1", "keyword2", "keyword3"],
+    "search_query": "main search query used"
+}}
+
+IMPORTANT: Return ONLY valid JSON. No additional text.
+"""
