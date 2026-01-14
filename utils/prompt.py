@@ -1,7 +1,6 @@
 import json
 from typing import Any, Dict
 
-
 def question_answer_prompt(role, experience, topics_to_focus, number_of_questions):
     return f"""
 You are an AI trained to generate technical interview questions and answers.
@@ -205,13 +204,28 @@ Role: {role} ({experience} years)
 Here are found resources categorized:
 {json.dumps(categorized_results, indent=2)}
 
+IMPORTANT: For YouTube videos, preserve ALL metadata including:
+- duration (already provided)
+- channel (channel name)
+- published_date (if available)
+- views (formatted views count)
+
 Select the BEST 2-3 resources from EACH category that are most relevant.
 Remove duplicates and low-quality links.
 Ensure all URLs are valid and accessible.
 
-Return JSON with this structure:
+Return JSON with this structure - PRESERVE ALL METADATA FIELDS:
 {{
-    "youtube_links": [{{"title": "...", "url": "...", "duration": "..."}}],
+    "youtube_links": [
+        {{
+            "title": "...",
+            "url": "...",
+            "duration": "...",
+            "channel": "...",
+            "published_date": "...",
+            "views": "...",
+        }}
+    ],
     "articles": [{{"title": "...", "url": "...", "source": "..."}}],
     "documentation": [{{"title": "...", "url": "...", "framework": "..."}}],
     "practice_links": [{{"title": "...", "url": "...", "platform": "..."}}],
@@ -221,5 +235,6 @@ Return JSON with this structure:
     "search_query": "main search query used"
 }}
 
+CRITICAL: Return ALL fields for YouTube videos, not just title, url, and duration.
 IMPORTANT: Return ONLY valid JSON. No additional text.
 """
