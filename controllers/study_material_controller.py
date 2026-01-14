@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from bson import ObjectId
 from typing import List, Dict, Any
 import os
+import re
 import json
 import requests
 from utils.helper import serialize_doc, serialize_cursor
@@ -23,6 +24,8 @@ questions = database["questions"]
 # Tavily Search API (Free tier available)
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY") 
 TAVILY_API_URL = os.getenv("TAVILY_API_URL")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY") 
+YOUTUBE_API_URL = os.getenv("YOUTUBE_API_URL")
 
 async def search_with_tavily(query: str, max_results: int = 5) -> List[Dict]:
     """Search using Tavily API (free tier available)"""
@@ -83,6 +86,158 @@ def _determine_content_type(url: str) -> str:
     else:
         return "article"
 
+def _extract_youtube_id(url: str) -> Optional[str]:
+    """Extract YouTube video ID from URL"""
+    if not url:
+        return None
+    
+    url = url.strip()
+    
+    # Handle different YouTube URL formats
+    patterns = [
+        # Regular watch URL: https://www.youtube.com/watch?v=VIDEO_ID
+        r'(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})',
+        # Short URL: https://youtu.be/VIDEO_ID
+        r'youtu\.be\/([a-zA-Z0-9_-]{11})',
+        # Embed URL: https://www.youtube.com/embed/VIDEO_ID
+        r'youtube\.com\/embed\/([a-zA-Z0-9_-]{11})',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    
+    return None
+
+
+def _format_youtube_views(views: str) -> str:
+    """Format YouTube views in k/M format"""
+    if not views:
+        return "0"
+    
+    try:
+        # Remove commas if present
+        views = views.replace(',', '')
+        views_int = int(views)
+        
+        if views_int >= 1_000_000:
+            return f"{views_int / 1_000_000:.1f}M".replace('.0', '')
+        elif views_int >= 1_000:
+            return f"{views_int / 1_000:.1f}K".replace('.0', '')
+        else:
+            return str(views_int)
+    except (ValueError, TypeError):
+        return views
+
+
+def _parse_youtube_duration(duration_iso: str) -> str:
+    """Convert ISO 8601 duration to readable format"""
+    if not duration_iso:
+        return "N/A"
+    
+    try:
+        # Parse ISO 8601 duration format (PT1H30M15S)
+        pattern = r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?'
+        match = re.match(pattern, duration_iso)
+        
+        if not match:
+            return "N/A"
+        
+        hours = int(match.group(1)) if match.group(1) else 0
+        minutes = int(match.group(2)) if match.group(2) else 0
+        seconds = int(match.group(3)) if match.group(3) else 0
+        
+        # Format duration nicely
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        elif minutes > 0:
+            return f"{minutes}m {seconds}s"
+        elif seconds > 0:
+            return f"{seconds}s"
+        else:
+            return "0s"
+    
+    except Exception as e:
+        print(f"⚠️ Error parsing duration {duration_iso}: {e}")
+        return "N/A"
+
+
+async def _fetch_youtube_metadata(video_id: str) -> Optional[Dict[str, str]]:
+    """Fetch YouTube video metadata using YouTube Data API"""
+    if not YOUTUBE_API_KEY:
+        print("⚠️ YouTube API key not configured in environment variables")
+        return None
+    
+    try:
+        print(f"📺 Fetching YouTube metadata for video: {video_id}")
+        
+        # YouTube Data API v3 endpoint
+        api_url = f"{YOUTUBE_API_URL}/videos"
+        
+        params = {
+            "part": "snippet,contentDetails,statistics",
+            "id": video_id,
+            "key": YOUTUBE_API_KEY
+        }
+        
+        response = requests.get(api_url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if data.get("items") and len(data["items"]) > 0:
+                item = data["items"][0]
+                snippet = item.get("snippet", {})
+                content_details = item.get("contentDetails", {})
+                statistics = item.get("statistics", {})
+                
+                # Parse duration
+                duration_iso = content_details.get("duration", "")
+                duration_readable = _parse_youtube_duration(duration_iso)
+                
+                # Format published date
+                published_date = snippet.get("publishedAt", "")
+                if published_date:
+                    try:
+                        # Convert ISO format to readable date
+                        published_date = published_date.replace('Z', '+00:00')
+                        published_date = datetime.fromisoformat(published_date)
+                        published_date = published_date.strftime("%b %d, %Y")
+                    except Exception as e:
+                        print(f"⚠️ Error parsing date {published_date}: {e}")
+                        published_date = published_date[:10]  # Just get YYYY-MM-DD
+                
+                # Format views in k/M format
+                raw_views = statistics.get("viewCount", "0")
+                formatted_views = _format_youtube_views(raw_views)
+                
+                print(f"✅ Fetched YouTube metadata: {duration_readable} by {snippet.get('channelTitle')}, {formatted_views} views")
+                
+                return {
+                    "duration": duration_readable,
+                    "channel": snippet.get("channelTitle", "Unknown"),
+                    "published_date": published_date,
+                    "views": formatted_views,
+                    "raw_views": raw_views,  # Keep original for sorting if needed
+                    "likes": statistics.get("likeCount", "0"),
+                    "comments": statistics.get("commentCount", "0")
+                }
+            else:
+                print(f"⚠️ No video found with ID: {video_id}")
+        else:
+            print(f"❌ YouTube API error {response.status_code}: {response.text[:200]}")
+        
+        return None
+        
+    except requests.exceptions.Timeout:
+        print(f"⏰ YouTube API timeout for video: {video_id}")
+        return None
+    except Exception as e:
+        print(f"❌ Error fetching YouTube metadata: {e}")
+        return None
+
+
 async def _categorize_materials(search_results: List[Dict]) -> Dict[str, List]:
     """Categorize search results into different types"""
     categorized = {
@@ -103,27 +258,43 @@ async def _categorize_materials(search_results: List[Dict]) -> Dict[str, List]:
             "score": result.get("score", 0.0)
         }
         
-        # Add duration for videos
         if result["type"] == "youtube":
-            material["duration"] = "15-30 min"  # Default estimate
-        
-        # Add difficulty for practice links
-        elif result["type"] == "practice":
-            material["difficulty"] = "medium"  # Default
-        
-        # Add to appropriate category
-        if result["type"] == "youtube":
+            # Extract video ID
+            video_id = _extract_youtube_id(result["url"])
+            if video_id:
+                # Fetch real YouTube metadata
+                video_metadata = await _fetch_youtube_metadata(video_id)
+                if video_metadata:
+                    material["duration"] = video_metadata.get("duration", "N/A")
+                    material["channel"] = video_metadata.get("channel", "Unknown")
+                    material["published_date"] = video_metadata.get("published_date")
+                    material["views"] = video_metadata.get("views")
+                else:
+                    # Fallback to default values
+                    material["duration"] = "N/A"
+                    material["channel"] = result.get("author", "Unknown")
+            else:
+                material["duration"] = "N/A"
+                material["channel"] = result.get("author", "Unknown")
+            
             categorized["youtube_links"].append(material)
+        
+        elif result["type"] == "practice":
+            material["difficulty"] = "medium"
+            categorized["practice_links"].append(material)
+        
         elif result["type"] == "article":
             categorized["articles"].append(material)
+        
         elif result["type"] == "documentation":
             categorized["documentation"].append(material)
-        elif result["type"] == "practice":
-            categorized["practice_links"].append(material)
+        
         elif result["type"] == "book":
             categorized["books"].append(material)
+        
         elif result["type"] == "course":
             categorized["courses"].append(material)
+        
         else:
             categorized["articles"].append(material)
     
@@ -139,13 +310,10 @@ async def generate_study_materials_with_ai(
     
     try:
         print(f"🔍 Step 1: Generating search queries for: {question}")
-        # Step 1: Generate search queries from the question        
         search_prompt = study_materials_search_queries_prompt(question, role, experience)
-        # Use GeminiService instead of direct genai calls
         query_response = GeminiService.generate(user_gemini_key, search_prompt)
         print(f"🤖 Raw Gemini response: {query_response}")
         
-        # Parse with markdown handling
         search_queries = parse_gemini_json_response(query_response, fix_newlines=False)
         print(f"✅ Parsed {len(search_queries)} search queries: {search_queries}")
         
@@ -158,17 +326,35 @@ async def generate_study_materials_with_ai(
         
         print(f"📊 Found {len(all_results)} search results")
         
-        # Step 3: Categorize and deduplicate
+        # Step 3: Categorize and fetch YouTube metadata
         categorized = await _categorize_materials(all_results)
+        
+        # Store YouTube metadata separately BEFORE Gemini selection
+        youtube_metadata = {}
+        for video in categorized.get("youtube_links", []):
+            video_id = _extract_youtube_id(video.get("url"))
+            if video_id:
+                youtube_metadata[video_id] = {
+                    "channel": video.get("channel"),
+                    "views": video.get("views"),
+                    "published_date": video.get("published_date"),
+                    "duration": video.get("duration")
+                }
         
         # Step 4: Let AI select best resources
         print("🤖 Step 4: AI selecting best resources...")
         selection_prompt = study_materials_selection_prompt(question, role, experience, categorized)
-        
         selection_response = GeminiService.generate(user_gemini_key, selection_prompt)
+        selected_materials = parse_gemini_json_response(selection_response, fix_newlines=True)
         
-        # Parse selection response
-        selected_materials = parse_gemini_json_response(selection_response,  fix_newlines=True)
+        # Step 5: Merge YouTube metadata back into selected materials
+        print("🔄 Merging YouTube metadata...")
+        for video in selected_materials.get("youtube_links", []):
+            video_id = _extract_youtube_id(video.get("url"))
+            if video_id and video_id in youtube_metadata:
+                # Merge metadata
+                video.update(youtube_metadata[video_id])
+                print(f"✅ Merged metadata for: {video.get('title')[:50]}...")
         
         # Count total sources
         material_categories = ["youtube_links", "articles", "documentation", 
