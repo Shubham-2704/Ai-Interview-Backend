@@ -18,6 +18,9 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+class AdminTokenVerify(BaseModel):
+    adminToken: str
+
 class UserResponse(BaseModel):
     id: str
     name: str
@@ -28,6 +31,8 @@ class UserResponse(BaseModel):
     updatedAt: datetime
     hasGeminiKey: bool = False
     geminiKeyMasked: Optional[str] = None
+    role: str = "user"
+
 
 class UpdateGeminiKey(BaseModel):
     apiKey: str
