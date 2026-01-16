@@ -30,6 +30,7 @@ async def protect(request: Request):
         "id": str(user["_id"]),
         "name": user["name"],
         "email": user["email"],
+        "role": user["role"],
     }
 
     return request.state.user

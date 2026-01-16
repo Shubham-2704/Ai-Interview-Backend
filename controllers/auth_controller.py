@@ -24,6 +24,7 @@ async def register_user(data: UserCreate):
     now = datetime.now(timezone.utc)
 
     gemini_key_encrypted = None
+    role = "user"
 
     # If user provided a Gemini key at signup, validate & encrypt it
     if data.geminiApiKey:
@@ -41,6 +42,7 @@ async def register_user(data: UserCreate):
         "email": data.email,
         "password": hash_password(data.password),
         "profileImageUrl": data.profileImageUrl,
+        "role": role, 
         "createdAt": now,
         "updatedAt": now
     }
@@ -67,9 +69,20 @@ async def register_user(data: UserCreate):
         createdAt=now,
         updatedAt=now,
         hasGeminiKey=bool(gemini_key_encrypted),
-        geminiKeyMasked=masked
+        geminiKeyMasked=masked,
+        role=role
     )
 
+# Verify Admin Token
+async def verify_admin_token(token_data: AdminTokenVerify):
+    admin_fixed_token = os.getenv("ADMIN_FIXED_TOKEN")
+    
+    if not admin_fixed_token:
+        return error_response(500, "Admin token not configured")
+    if token_data.adminToken != admin_fixed_token:
+        return error_response(403, "Invalid admin token")
+    
+    return success_response("Admin token verified")
 
 # Login User
 async def login_user(data: UserLogin):
@@ -95,6 +108,10 @@ async def login_user(data: UserLogin):
             masked = mask_key(decrypt(gemini_key))
         except:
             masked = None
+    
+    role = "user"
+    if user.get("role") == "admin":
+        role = "admin"
 
     return UserResponse(
         id=str(user["_id"]),
@@ -105,7 +122,8 @@ async def login_user(data: UserLogin):
         createdAt=user.get("createdAt", now),
         updatedAt=now,
         hasGeminiKey=bool(gemini_key),
-        geminiKeyMasked=masked
+        geminiKeyMasked=masked,
+        role=role
     )
 
 # Get User Profile
@@ -133,7 +151,8 @@ async def get_profile(request: Request, user_data = Depends(protect)):
         "createdAt": user.get("createdAt"),
         "updatedAt": user.get("updatedAt"),
         "hasGeminiKey": bool(gemini_key),
-        "geminiKeyMasked": masked
+        "geminiKeyMasked": masked,
+        "role": user.get("role")
     }
 
 # Update User Profile
@@ -180,7 +199,8 @@ async def update_profile(request: Request, data: UserProfileUpdate, user_data = 
         "createdAt": updated_user.get("createdAt"),
         "updatedAt": updated_user.get("updatedAt"),
         "hasGeminiKey": bool(gemini_key),
-        "geminiKeyMasked": masked
+        "geminiKeyMasked": masked,
+        "role": updated_user.get("role")
     }
 
 reset_otps = database["password_reset_otps"]
