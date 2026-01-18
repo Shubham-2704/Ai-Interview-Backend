@@ -1059,44 +1059,101 @@ async def get_user_statistics():
 # ---------- Create User (Admin) ----------
 async def admin_create_user(
     request: Request,
-    data: dict,
+    data: AdminCreateUserRequest,
     current_user: dict = Depends(protect)
 ):
     """Create new user (admin only)"""
+    # Check admin access
     await check_admin_access(current_user["id"])
     
     # Check if email already exists
-    existing = await users.find_one({"email": data["email"]})
+    existing = await users.find_one({"email": data.email})
     if existing:
         return error_response(400, "Email already registered")
     
     now = datetime.now(timezone.utc)
     
-    # Prepare user document
+    # Handle join date
+    join_date = now
+    if data.joinDate:
+        try:
+            join_date = datetime.fromisoformat(data.joinDate.replace('Z', '+00:00'))
+        except:
+            join_date = now
+    
+    # Handle Gemini API key (optional)
+    gemini_key_encrypted = None
+    if data.geminiApiKey:
+        try:
+            # Validate the Gemini API key
+            client = genai.Client(api_key=data.geminiApiKey)
+            list(client.models.list())
+            # Encrypt the key
+            gemini_key_encrypted = encrypt(data.geminiApiKey)
+        except Exception as e:
+            print(f"Gemini API key validation failed: {e}")
+            return error_response(400, "Invalid or unauthorized Gemini API key")
+    
+    # Create user document
     user_doc = {
-        "name": data["name"],
-        "email": data["email"],
-        "password": hash_password(data["password"]),
-        "role": data.get("role", "user"),
-        "profileImageUrl": data.get("profileImageUrl"),
-        "createdAt": now,
+        "name": data.name,
+        "email": data.email,
+        "password": hash_password(data.password),
+        "role": data.role,
+        "profileImageUrl": data.profileImageUrl,
+        "notes": data.notes,
+        "createdAt": join_date,
         "updatedAt": now,
-        "isActive": data.get("isActive", True)
+        "isActive": data.isActive
     }
+    
+    # Add encrypted Gemini key if provided
+    if gemini_key_encrypted:
+        user_doc["geminiApiKey"] = gemini_key_encrypted
     
     # Insert user
     result = await users.insert_one(user_doc)
     user_id = str(result.inserted_id)
     
-    # Get created user without password
-    created_user = await users.find_one(
-        {"_id": ObjectId(user_id)},
-        {"password": 0, "geminiApiKey": 0}
-    )
+    # Get created user
+    created_user = await users.find_one({"_id": ObjectId(user_id)})
+    
+    # Mask Gemini key for response
+    gemini_key_masked = None
+    if created_user.get("geminiApiKey"):
+        try:
+            decrypted_key = decrypt(created_user["geminiApiKey"])
+            gemini_key_masked = mask_key(decrypted_key)
+        except Exception as e:
+            print(f"Error decrypting API key: {e}")
+            gemini_key_masked = None
+    
+    # Prepare response
+    response_data = {
+        "id": user_id,
+        "name": created_user["name"],
+        "email": created_user["email"],
+        "profileImageUrl": created_user.get("profileImageUrl"),
+        "role": created_user.get("role", "user"),
+        "createdAt": created_user["createdAt"].isoformat(),
+        "updatedAt": created_user["updatedAt"].isoformat(),
+        "hasGeminiKey": bool(created_user.get("geminiApiKey")),
+        "geminiKeyMasked": gemini_key_masked,
+        "isActive": created_user.get("isActive", True),
+        "notes": created_user.get("notes"),
+    }
+    
+    # Send welcome email if requested
+    if data.sendWelcomeEmail:
+        # Add your email sending logic here
+        print(f"Would send welcome email to: {data.email}")
     
     return success_response(
         "User created successfully",
-        {"user": serialize_doc(created_user)}
+        {
+            "user": response_data,
+            "welcomeEmailSent": data.sendWelcomeEmail
+        }
     )
 
 # ---------- Get User Statistics Endpoint ----------
