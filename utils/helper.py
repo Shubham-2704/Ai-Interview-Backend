@@ -23,6 +23,7 @@ def serialize_doc(doc: dict):
     # convert ObjectId → string (keep `_id`)
     if isinstance(doc.get("_id"), ObjectId):
         doc["_id"] = str(doc["_id"])
+        doc["id"] = str(doc["_id"])
 
     # convert other ObjectIds in document
     for key, value in doc.items():
