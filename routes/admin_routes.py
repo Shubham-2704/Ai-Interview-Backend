@@ -10,7 +10,11 @@ from controllers.admin_controller import (
     get_admin_sessions_list,
     get_user_stats_endpoint,
     admin_create_user,         # Make sure this is imported
-    admin_delete_session
+    admin_delete_session,
+    get_admin_session_details,
+    get_admin_session_questions,
+    get_admin_session_study_materials,
+    get_admin_study_materials_by_question
 )
 from models.admin_model import DateRangeRequest, AdminCreateUserRequest  # Add AdminCreateUserRequest import
 from middlewares.auth_middlewares import protect
@@ -145,3 +149,42 @@ async def admin_health_check():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "service": "admin-api"
     }
+
+# ---------- Session Detail Routes ----------
+@router.get("/sessions/{session_id}")  # GET /api/admin/sessions/{session_id}
+async def admin_get_session_details(
+    request: Request,
+    session_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get detailed session information"""
+    return await get_admin_session_details(request, session_id, current_user)
+
+@router.get("/sessions/{session_id}/questions")  # GET /api/admin/sessions/{session_id}/questions
+async def admin_get_session_questions(
+    request: Request,
+    session_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get questions for a specific session"""
+    return await get_admin_session_questions(request, session_id, current_user)
+
+@router.get("/sessions/{session_id}/study-materials")  # GET /api/admin/sessions/{session_id}/study-materials
+async def admin_get_session_study_materials(
+    request: Request,
+    session_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get study materials for a specific session"""
+    return await get_admin_session_study_materials(request, session_id, current_user)
+
+# ---------- Study Materials Routes ----------
+@router.get("/study-materials/question/{question_id}")  # GET /api/admin/study-materials/question/{question_id}
+async def admin_get_study_materials_by_question(
+    request: Request,
+    question_id: str,
+    session_id: str = Query(None, description="Optional session ID filter"),
+    current_user: dict = Depends(protect)
+):
+    """Get study materials for a specific question"""
+    return await get_admin_study_materials_by_question(request, question_id, session_id, current_user)
