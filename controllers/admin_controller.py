@@ -103,33 +103,63 @@ async def get_dashboard_stats(
     recent_users = await get_recent_users(limit=5)
     
     # 10. System Status
-    system_status = await get_system_status()
+    # try:
+    #     # Import your REAL system controller
+    #     from controllers.system_controller import get_system_status
+        
+    #     # Call the REAL function
+    #     system_result = await get_system_status()
+        
+    #     if system_result.get("status") == "success":
+    #         system_status = system_result["data"]
+    #     else:
+    #         # Fallback if system controller returns error
+    #         system_status = {
+    #             "apiResponseTime": 150,
+    #             "databaseUsage": 0,
+    #             "uptime": 99.9,
+    #             "activeConnections": 0,
+    #             "totalRequests": 0,
+    #             "errorRate": 0.5
+    #         }
+            
+    # except Exception as e:
+    #     print(f"Error getting system status: {e}")
+    #     # Fallback
+    #     system_status = {
+    #         "apiResponseTime": 150,
+    #         "databaseUsage": 0,
+    #         "uptime": 99.9,
+    #         "activeConnections": 0,
+    #         "totalRequests": 0,
+    #         "errorRate": 0.5
+    #     }
+        
+    #     # 11. Users by Role Distribution (NEW)
+    # users_by_role_pipeline = [
+    #         {
+    #             "$group": {
+    #                 "_id": "$role",
+    #                 "count": {"$sum": 1}
+    #             }
+    #         }
+    #     ]
     
-    # 11. Users by Role Distribution (NEW)
-    users_by_role_pipeline = [
-        {
-            "$group": {
-                "_id": "$role",
-                "count": {"$sum": 1}
-            }
-        }
-    ]
+    # role_cursor = users.aggregate(users_by_role_pipeline)
+    # users_by_role_list = await serialize_cursor(role_cursor)
     
-    role_cursor = users.aggregate(users_by_role_pipeline)
-    users_by_role_list = await serialize_cursor(role_cursor)
+    # # Convert to object format expected by frontend
+    # users_by_role = {}
+    # for item in users_by_role_list:
+    #     role_name = item["_id"]
+    #     if role_name not in ["admin", "moderator", "user"]:
+    #         role_name = "user"
+    #     users_by_role[role_name] = item["count"]
     
-    # Convert to object format expected by frontend
-    users_by_role = {}
-    for item in users_by_role_list:
-        role_name = item["_id"]
-        if role_name not in ["admin", "moderator", "user"]:
-            role_name = "user"
-        users_by_role[role_name] = item["count"]
-    
-    # Ensure all roles exist in response
-    for role in ["user", "admin", "moderator"]:
-        if role not in users_by_role:
-            users_by_role[role] = 0
+    # # Ensure all roles exist in response
+    # for role in ["user", "admin", "moderator"]:
+    #     if role not in users_by_role:
+    #         users_by_role[role] = 0
     
     # Return data directly without wrapper
     return {
@@ -142,8 +172,8 @@ async def get_dashboard_stats(
         "sessionsPerDay": sessions_per_day,
         "topUsers": top_users,
         "recentUsers": recent_users,
-        "systemStatus": system_status,
-        "usersByRole": users_by_role,
+        # "systemStatus": system_status,
+        # "usersByRole": users_by_role,
     }
 
 async def get_sessions_per_day(start_date: datetime, end_date: datetime) -> List[Dict]:
@@ -354,58 +384,58 @@ async def get_recent_users(limit: int = 5) -> List[Dict]:
     
     return formatted_results
 
-async def get_system_status() -> Dict:
-    """Get system health and performance metrics"""
-    now = datetime.now(timezone.utc)
+# async def get_system_status() -> Dict:
+#     """Get system health and performance metrics"""
+#     now = datetime.now(timezone.utc)
     
-    # Get active connections (users active in last 5 minutes)
-    five_min_ago = now - timedelta(minutes=5)
-    active_connections = await users.count_documents({
-        "updatedAt": {"$gte": five_min_ago}
-    })
+#     # Get active connections (users active in last 5 minutes)
+#     five_min_ago = now - timedelta(minutes=5)
+#     active_connections = await users.count_documents({
+#         "updatedAt": {"$gte": five_min_ago}
+#     })
     
-    # Calculate uptime (simplified - you'd want to track this properly)
-    total_requests = await get_total_requests_last_hour()
+#     # Calculate uptime (simplified - you'd want to track this properly)
+#     total_requests = await get_total_requests_last_hour()
     
-    # Calculate error rate (simplified)
-    error_rate = 0.2
+#     # Calculate error rate (simplified)
+#     error_rate = 0.2
     
-    # Database size/usage (simplified)
-    db_usage = await calculate_database_usage()
+#     # Database size/usage (simplified)
+#     db_usage = await calculate_database_usage()
     
-    return {
-        "apiResponseTime": 98,
-        "databaseUsage": db_usage,
-        "uptime": 99.9,
-        "activeConnections": active_connections,
-        "totalRequests": total_requests,
-        "errorRate": error_rate
-    }
+#     return {
+#         "apiResponseTime": 98,
+#         "databaseUsage": db_usage,
+#         "uptime": 99.9,
+#         "activeConnections": active_connections,
+#         "totalRequests": total_requests,
+#         "errorRate": error_rate
+#     }
 
-async def get_total_requests_last_hour() -> int:
-    """Get total API requests in last hour"""
-    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+# async def get_total_requests_last_hour() -> int:
+#     """Get total API requests in last hour"""
+#     one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
     
-    # Count sessions created in last hour as a proxy for requests
-    return await sessions.count_documents({
-        "createdAt": {"$gte": one_hour_ago}
-    })
+#     # Count sessions created in last hour as a proxy for requests
+#     return await sessions.count_documents({
+#         "createdAt": {"$gte": one_hour_ago}
+#     })
 
-async def calculate_database_usage() -> float:
-    """Calculate database usage percentage"""
-    # Get total document counts
-    total_users = await users.count_documents({})
-    total_sessions = await sessions.count_documents({})
-    total_questions = await questions.count_documents({})
-    total_materials = await study_materials.count_documents({})
+# async def calculate_database_usage() -> float:
+#     """Calculate database usage percentage"""
+#     # Get total document counts
+#     total_users = await users.count_documents({})
+#     total_sessions = await sessions.count_documents({})
+#     total_questions = await questions.count_documents({})
+#     total_materials = await study_materials.count_documents({})
     
-    total_docs = total_users + total_sessions + total_questions + total_materials
+#     total_docs = total_users + total_sessions + total_questions + total_materials
     
-    # Simplified calculation
-    max_capacity = 100000
-    usage_percentage = (total_docs / max_capacity) * 100
+#     # Simplified calculation
+#     max_capacity = 100000
+#     usage_percentage = (total_docs / max_capacity) * 100
     
-    return round(min(usage_percentage, 100), 1)
+#     return round(min(usage_percentage, 100), 1)
 
 # ---------- Get Users List (for admin) ----------
 # ---------- Get Users List (for admin) ----------
@@ -545,12 +575,12 @@ async def get_admin_users_list(
     users_list = await serialize_cursor(cursor)
     
     # Debug: Check what we're getting
-    print(f"\n=== DEBUG: Found {len(users_list)} users ===")
-    for i, user in enumerate(users_list):
-        print(f"User {i+1}: {user.get('name')}")
-        print(f"  Sessions: {user.get('sessionCount')}")
-        print(f"  Materials: {user.get('materialCount')}")
-        print(f"  Questions: {user.get('questionCount')}")
+    # print(f"\n=== DEBUG: Found {len(users_list)} users ===")
+    # for i, user in enumerate(users_list):
+    #     print(f"User {i+1}: {user.get('name')}")
+    #     print(f"  Sessions: {user.get('sessionCount')}")
+    #     print(f"  Materials: {user.get('materialCount')}")
+    #     print(f"  Questions: {user.get('questionCount')}")
     
     # Format users list
     formatted_users = []
@@ -856,6 +886,7 @@ async def get_sessions_stats(
     )
 
 # ---------- Get All Sessions (for admin) ----------
+# ---------- Get All Sessions (for admin) ----------
 async def get_admin_sessions_list(
     request: Request,
     page: int = 1,
@@ -881,7 +912,7 @@ async def get_admin_sessions_list(
     if status != "all":
         filter_query["status"] = status
     
-    # Get sessions with user details
+    # Get sessions with user details and topicsToFocus
     pipeline = [
         {"$match": filter_query},
         {
@@ -900,6 +931,7 @@ async def get_admin_sessions_list(
                 "_id": 1,
                 "role": 1,
                 "experience": 1,
+                "topicsToFocus": 1,
                 "description": 1,
                 "status": 1,
                 "duration": 1,
@@ -921,38 +953,52 @@ async def get_admin_sessions_list(
     cursor = sessions.aggregate(pipeline)
     sessions_list = await serialize_cursor(cursor)
     
-    # Format sessions list
+    # Format sessions list with serializable data
     formatted_sessions = []
     for session in sessions_list:
-        formatted_sessions.append({
-            "id": session["_id"],
+        # Convert datetime objects to ISO format strings
+        created_at = session.get("createdAt")
+        updated_at = session.get("updatedAt")
+        
+        if isinstance(created_at, datetime):
+            created_at = created_at.isoformat()
+        if isinstance(updated_at, datetime):
+            updated_at = updated_at.isoformat()
+        
+        # Count materials for this session
+        material_count = await study_materials.count_documents({
+            "session_id": str(session.get("_id") or session.get("id"))
+        })
+        
+        formatted_session = {
+            "id": str(session.get("_id") or session.get("id", "")),
             "role": session.get("role", ""),
             "experience": session.get("experience", ""),
+            "topicsToFocus": session.get("topicsToFocus", []),
             "description": session.get("description", ""),
             "status": session.get("status", "active"),
             "duration": session.get("duration", 0),
-            "createdAt": session.get("createdAt"),
-            "updatedAt": session.get("updatedAt"),
+            "createdAt": created_at,
+            "updatedAt": updated_at,
             "user": session.get("user", {}),
-            "questionCount": session.get("questionCount", 0)
-        })
+            "questionCount": session.get("questionCount", 0),
+            "materialCount": material_count  # Add materials count
+        }
+        formatted_sessions.append(formatted_session)
     
     # Get total count for pagination
     total = await sessions.count_documents(filter_query)
     
-    return success_response(
-        "Sessions list retrieved successfully",
-        {
-            "sessions": formatted_sessions,
-            "pagination": {
-                "page": page,
-                "limit": limit,
-                "total": total,
-                "pages": (total + limit - 1) // limit
-            }
+    # Return data directly without wrapper
+    return {
+        "sessions": formatted_sessions,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "pages": (total + limit - 1) // limit
         }
-    )
-
+    }
 # ---------- Get User Statistics ----------
 async def get_user_statistics():
     """Get user statistics for dashboard cards"""
@@ -1298,3 +1344,280 @@ async def admin_update_user(
         "User updated successfully",
         {"user": serialize_doc(updated_user)}
     )
+
+# ---------- Get Session Details (admin) ----------
+async def get_admin_session_details(
+    request: Request,
+    session_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get detailed session information for admin"""
+    await check_admin_access(current_user["id"])
+    
+    session = await sessions.find_one({"_id": ObjectId(session_id)})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Get user information
+    user = await users.find_one({"_id": ObjectId(session["user"])})
+    user_info = None
+    if user:
+        user_info = {
+            "id": str(user["_id"]),
+            "name": user.get("name", ""),
+            "email": user.get("email", ""),
+            "profileImageUrl": user.get("profileImageUrl", "")
+        }
+    
+    # Get session questions count
+    question_count = await questions.count_documents({"session": ObjectId(session_id)})
+    
+    # Get session materials count
+    material_count = await study_materials.count_documents({"session_id": session_id})
+    
+    session_data = serialize_doc(session)
+    session_data["user"] = user_info
+    session_data["questionCount"] = question_count
+    session_data["materialCount"] = material_count
+    
+    # Return data directly without wrapper
+    return session_data
+
+# ---------- Get Session Questions (admin) ----------
+async def get_admin_session_questions(
+    request: Request,
+    session_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get questions for a specific session (admin)"""
+    await check_admin_access(current_user["id"])
+    
+    # Verify session exists and belongs to a user
+    session = await sessions.find_one({"_id": ObjectId(session_id)})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Get all questions for this session
+    question_cursor = questions.find({"session": ObjectId(session_id)}).sort("createdAt", -1)
+    questions_list = await serialize_cursor(question_cursor)
+    
+    # Format questions
+    formatted_questions = []
+    for question in questions_list:
+        formatted_questions.append({
+            "id": str(question.get("_id")),
+            "question": question.get("question", ""),
+            "answer": question.get("answer", ""),
+            "isPinned": question.get("isPinned", False),
+            "createdAt": question.get("createdAt"),
+            "updatedAt": question.get("updatedAt"),
+            "note": question.get("note", ""),
+            "session": str(question.get("session", ""))
+        })
+    
+    return {
+        "questions": formatted_questions,
+        "total": len(formatted_questions),
+        "session": {
+            "id": session_id,
+            "role": session.get("role", ""),
+            "experience": session.get("experience", ""),
+            "user": str(session.get("user", ""))
+        }
+    }
+
+# ---------- Get Session Study Materials (admin) ----------
+async def get_admin_session_study_materials(
+    request: Request,
+    session_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get study materials for a specific session (admin)"""
+    await check_admin_access(current_user["id"])
+    
+    # Verify session exists
+    session = await sessions.find_one({"_id": ObjectId(session_id)})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Get all study materials for this session
+    materials_cursor = study_materials.find({"session_id": session_id})
+    materials_list = await serialize_cursor(materials_cursor)
+    
+    # Group materials by question
+    grouped_materials = {}
+    for material in materials_list:
+        question_text = material.get("question_text", "Unknown Question")
+        
+        if question_text not in grouped_materials:
+            grouped_materials[question_text] = {
+                "question_text": question_text,
+                "youtube_links": [],
+                "articles": [],
+                "documentation": [],
+                "practice_links": [],
+                "books": [],
+                "courses": [],
+                "keywords": material.get("keywords", []),
+                "search_query": material.get("search_query", ""),
+                "total_sources": 0,
+                "created_at": material.get("created_at"),
+                "updated_at": material.get("updated_at"),
+                "ai_model_used": material.get("ai_model_used", "")
+            }
+        
+        # Add YouTube links
+        if material.get("youtube_links"):
+            grouped_materials[question_text]["youtube_links"].extend(material["youtube_links"])
+        
+        # Add articles
+        if material.get("articles"):
+            grouped_materials[question_text]["articles"].extend(material["articles"])
+        
+        # Add documentation
+        if material.get("documentation"):
+            grouped_materials[question_text]["documentation"].extend(material["documentation"])
+        
+        # Add practice links
+        if material.get("practice_links"):
+            grouped_materials[question_text]["practice_links"].extend(material["practice_links"])
+        
+        # Add books
+        if material.get("books"):
+            grouped_materials[question_text]["books"].extend(material["books"])
+        
+        # Add courses
+        if material.get("courses"):
+            grouped_materials[question_text]["courses"].extend(material["courses"])
+    
+    # Calculate total sources for each group
+    for question_text, data in grouped_materials.items():
+        total = (
+            len(data["youtube_links"]) +
+            len(data["articles"]) +
+            len(data["documentation"]) +
+            len(data["practice_links"]) +
+            len(data["books"]) +
+            len(data["courses"])
+        )
+        data["total_sources"] = total
+    
+    # Convert to array format
+    materials_array = list(grouped_materials.values())
+    
+    return {
+        "data": grouped_materials,
+        "materials": materials_array,
+        "total": len(materials_array),
+        "session": {
+            "id": session_id,
+            "role": session.get("role", ""),
+            "experience": session.get("experience", "")
+        }
+    }
+
+# ---------- Get Study Materials by Question (admin) ----------
+async def get_admin_study_materials_by_question(
+    request: Request,
+    question_id: str,
+    session_id: str = None,
+    current_user: dict = Depends(protect)
+):
+    """Get study materials for a specific question (admin)"""
+    await check_admin_access(current_user["id"])
+    
+    # First, get the question
+    question = await questions.find_one({"_id": ObjectId(question_id)})
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    
+    # Build query to find materials for this question
+    query = {"question_text": {"$regex": question["question"], "$options": "i"}}
+    
+    # If session_id is provided, filter by session
+    if session_id:
+        query["session_id"] = session_id
+    
+    # Find matching materials
+    materials_cursor = study_materials.find(query)
+    materials_list = await serialize_cursor(materials_cursor)
+    
+    if not materials_list:
+        # Return empty structure if no materials found
+        return {
+            "question_text": question["question"],
+            "youtube_links": [],
+            "articles": [],
+            "documentation": [],
+            "practice_links": [],
+            "books": [],
+            "courses": [],
+            "keywords": [],
+            "total_sources": 0,
+            "ai_model_used": ""
+        }
+    
+    # Combine all materials
+    combined_materials = {
+        "question_text": question["question"],
+        "youtube_links": [],
+        "articles": [],
+        "documentation": [],
+        "practice_links": [],
+        "books": [],
+        "courses": [],
+        "keywords": [],
+        "search_query": "",
+        "total_sources": 0,
+        "created_at": materials_list[0].get("created_at"),
+        "updated_at": materials_list[0].get("updated_at"),
+        "ai_model_used": materials_list[0].get("ai_model_used", "")
+    }
+    
+    # Combine all materials from the list
+    for material in materials_list:
+        # Add YouTube links
+        if material.get("youtube_links"):
+            combined_materials["youtube_links"].extend(material["youtube_links"])
+        
+        # Add articles
+        if material.get("articles"):
+            combined_materials["articles"].extend(material["articles"])
+        
+        # Add documentation
+        if material.get("documentation"):
+            combined_materials["documentation"].extend(material["documentation"])
+        
+        # Add practice links
+        if material.get("practice_links"):
+            combined_materials["practice_links"].extend(material["practice_links"])
+        
+        # Add books
+        if material.get("books"):
+            combined_materials["books"].extend(material["books"])
+        
+        # Add courses
+        if material.get("courses"):
+            combined_materials["courses"].extend(material["courses"])
+        
+        # Add keywords (unique)
+        if material.get("keywords"):
+            for keyword in material["keywords"]:
+                if keyword not in combined_materials["keywords"]:
+                    combined_materials["keywords"].append(keyword)
+        
+        # Use the first search query
+        if not combined_materials["search_query"] and material.get("search_query"):
+            combined_materials["search_query"] = material["search_query"]
+    
+    # Calculate total sources
+    combined_materials["total_sources"] = (
+        len(combined_materials["youtube_links"]) +
+        len(combined_materials["articles"]) +
+        len(combined_materials["documentation"]) +
+        len(combined_materials["practice_links"]) +
+        len(combined_materials["books"]) +
+        len(combined_materials["courses"])
+    )
+    
+    return combined_materials
