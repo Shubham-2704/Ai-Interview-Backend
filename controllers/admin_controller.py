@@ -10,6 +10,7 @@ from utils.auth import *
 from utils.hash import *
 from google import genai
 from utils.encryption import *
+from controllers.system_controller import *
 
 # Collections
 users = database["users"]
@@ -103,63 +104,60 @@ async def get_dashboard_stats(
     recent_users = await get_recent_users(limit=5)
     
     # 10. System Status
-    # try:
-    #     # Import your REAL system controller
-    #     from controllers.system_controller import get_system_status
+    try:        
+        # Call the REAL function
+        system_result = await get_system_status()
         
-    #     # Call the REAL function
-    #     system_result = await get_system_status()
-        
-    #     if system_result.get("status") == "success":
-    #         system_status = system_result["data"]
-    #     else:
-    #         # Fallback if system controller returns error
-    #         system_status = {
-    #             "apiResponseTime": 150,
-    #             "databaseUsage": 0,
-    #             "uptime": 99.9,
-    #             "activeConnections": 0,
-    #             "totalRequests": 0,
-    #             "errorRate": 0.5
-    #         }
+        if system_result.get("status") == "success":
+            system_status = system_result["data"]
+        else:
+            # Fallback if system controller returns error
+            system_status = {
+                "apiResponseTime": 150,
+                "databaseUsage": 0,
+                "uptime": 99.9,
+                "activeConnections": 0,
+                "totalRequests": 0,
+                "errorRate": 0.5
+            }
             
-    # except Exception as e:
-    #     print(f"Error getting system status: {e}")
-    #     # Fallback
-    #     system_status = {
-    #         "apiResponseTime": 150,
-    #         "databaseUsage": 0,
-    #         "uptime": 99.9,
-    #         "activeConnections": 0,
-    #         "totalRequests": 0,
-    #         "errorRate": 0.5
-    #     }
+    except Exception as e:
+        print(f"Error getting system status: {e}")
+        # Fallback
+        system_status = {
+            "apiResponseTime": 150,
+            "databaseUsage": 0,
+            "uptime": 99.9,
+            "activeConnections": 0,
+            "totalRequests": 0,
+            "errorRate": 0.5
+        }
         
-    #     # 11. Users by Role Distribution (NEW)
-    # users_by_role_pipeline = [
-    #         {
-    #             "$group": {
-    #                 "_id": "$role",
-    #                 "count": {"$sum": 1}
-    #             }
-    #         }
-    #     ]
+        # 11. Users by Role Distribution (NEW)
+    users_by_role_pipeline = [
+            {
+                "$group": {
+                    "_id": "$role",
+                    "count": {"$sum": 1}
+                }
+            }
+        ]
     
-    # role_cursor = users.aggregate(users_by_role_pipeline)
-    # users_by_role_list = await serialize_cursor(role_cursor)
+    role_cursor = users.aggregate(users_by_role_pipeline)
+    users_by_role_list = await serialize_cursor(role_cursor)
     
-    # # Convert to object format expected by frontend
-    # users_by_role = {}
-    # for item in users_by_role_list:
-    #     role_name = item["_id"]
-    #     if role_name not in ["admin", "moderator", "user"]:
-    #         role_name = "user"
-    #     users_by_role[role_name] = item["count"]
+    # Convert to object format expected by frontend
+    users_by_role = {}
+    for item in users_by_role_list:
+        role_name = item["_id"]
+        if role_name not in ["admin", "moderator", "user"]:
+            role_name = "user"
+        users_by_role[role_name] = item["count"]
     
-    # # Ensure all roles exist in response
-    # for role in ["user", "admin", "moderator"]:
-    #     if role not in users_by_role:
-    #         users_by_role[role] = 0
+    # Ensure all roles exist in response
+    for role in ["user", "admin", "moderator"]:
+        if role not in users_by_role:
+            users_by_role[role] = 0
     
     # Return data directly without wrapper
     return {
@@ -172,8 +170,8 @@ async def get_dashboard_stats(
         "sessionsPerDay": sessions_per_day,
         "topUsers": top_users,
         "recentUsers": recent_users,
-        # "systemStatus": system_status,
-        # "usersByRole": users_by_role,
+        "systemStatus": system_status,
+        "usersByRole": users_by_role,
     }
 
 async def get_sessions_per_day(start_date: datetime, end_date: datetime) -> List[Dict]:
@@ -1255,8 +1253,8 @@ async def admin_update_user(
     """Update user information (admin only)"""
     await check_admin_access(current_user["id"])
     
-    if user_id == current_user["id"]:
-        return error_response(400, "Cannot modify your own admin status")
+    # if user_id == current_user["id"]:
+    #     return error_response(400, "Cannot modify your own admin status")
     
     user = await users.find_one({"_id": ObjectId(user_id)})
     if not user:

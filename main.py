@@ -8,6 +8,8 @@ from routes.question_routes import router as question_router
 from routes.pdf_routes import router as pdf_router
 from routes.study_material_routes import router as study_material_router
 from routes.admin_routes import router as admin_router
+from routes.system_routes import router as system_router
+from middlewares.request_tracker import *
 from starlette.staticfiles import StaticFiles
 
 
@@ -33,6 +35,8 @@ app.include_router(question_router)
 app.include_router(pdf_router)
 app.include_router(study_material_router)
 app.include_router(admin_router)
+app.include_router(system_router)
+app.middleware("http")(request_tracker_middleware)
 
 @app.get("/")
 async def root():
