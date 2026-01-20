@@ -9,6 +9,8 @@ from routes.pdf_routes import router as pdf_router
 from routes.study_material_routes import router as study_material_router
 from routes.admin_routes import router as admin_router
 from routes.system_routes import router as system_router
+from routes.analytics_routes import router as analytics_router
+from routes.tracking_routes import router as tracking_router
 from middlewares.request_tracker import *
 from starlette.staticfiles import StaticFiles
 
@@ -36,7 +38,12 @@ app.include_router(pdf_router)
 app.include_router(study_material_router)
 app.include_router(admin_router)
 app.include_router(system_router)
+app.include_router(analytics_router)
+app.include_router(tracking_router)
 app.middleware("http")(request_tracker_middleware)
+if os.getenv("ENABLE_BACKEND_TRACKING", "true").lower() == "true":
+    from middlewares.tracking_middleware import TrackingMiddleware
+    app.add_middleware(TrackingMiddleware)
 
 @app.get("/")
 async def root():
