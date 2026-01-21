@@ -3,7 +3,7 @@ from fastapi import Request, Depends
 from middlewares.auth_middlewares import protect
 from models.user_model import *
 from utils.hash import hash_password, verify_password
-from utils.auth import generate_token
+from utils.auth import generate_token, verify_google_token
 from utils.helper import error_response
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
@@ -72,6 +72,90 @@ async def register_user(data: UserCreate):
         geminiKeyMasked=masked,
         role=role
     )
+
+# Google signup
+async def google_signup(data: GoogleSignupRequest):
+    # Verify Google token
+    google_user = await verify_google_token(data.token)
+    
+    if not google_user:
+        return error_response(401, "Invalid Google token")
+    
+    if not google_user.get("email_verified", False):
+        return error_response(400, "Email not verified by Google")
+    
+    email = google_user["email"]
+    name = google_user.get("name", "").strip()
+    
+    if not name:
+        # Extract name from email if not provided
+        name = email.split('@')[0]
+    
+    existing_user = await users.find_one({"email": email})
+    
+    now = datetime.now(timezone.utc)
+    
+    if existing_user:
+        await users.update_one(
+            {"_id": existing_user["_id"]},
+            {"$set": {"updatedAt": now}}
+        )
+        
+        gemini_key = existing_user.get("geminiApiKey")
+        masked = None
+        
+        if gemini_key:
+            try:
+                masked = mask_key(decrypt(gemini_key))
+            except:
+                masked = None
+        
+        role = "user"
+        if existing_user.get("role") == "admin":
+            role = "admin"
+        
+        return UserResponse(
+            id=str(existing_user["_id"]),
+            name=existing_user["name"],
+            email=existing_user["email"],
+            profileImageUrl=existing_user.get("profileImageUrl") or google_user.get("picture"),
+            token=generate_token(str(existing_user["_id"])),
+            createdAt=existing_user.get("createdAt", now),
+            updatedAt=now,
+            hasGeminiKey=bool(gemini_key),
+            geminiKeyMasked=masked,
+            role=role
+        )
+    else:
+        # Create new user
+        new_user = {
+            "name": name,
+            "email": email,
+            "password": None,  # No password for Google users
+            "profileImageUrl": google_user.get("picture"),
+            "authProvider": "google",
+            "googleId": google_user.get("sub"),
+            "role": "user",
+            "emailVerified": True,  # Google already verified
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        
+        result = await users.insert_one(new_user)
+        user_id = str(result.inserted_id)
+        
+        return UserResponse(
+            id=user_id,
+            name=name,
+            email=email,
+            profileImageUrl=google_user.get("picture"),
+            token=generate_token(user_id),
+            createdAt=now,
+            updatedAt=now,
+            hasGeminiKey=False,
+            geminiKeyMasked=None,
+            role="user"
+        )
 
 # Verify Admin Token
 async def verify_admin_token(token_data: AdminTokenVerify):
