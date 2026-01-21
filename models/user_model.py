@@ -52,3 +52,12 @@ class VerifyOtpRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     email: EmailStr
     newPassword: str
+
+class GoogleSignupRequest(BaseModel):
+    token: str  # Google OAuth token
+
+class GoogleUserInfo(BaseModel):
+    email: EmailStr
+    name: str
+    picture: Optional[str] = None
+    sub: str  # Google user ID
