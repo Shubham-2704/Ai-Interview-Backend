@@ -238,3 +238,82 @@ Return JSON with this structure - PRESERVE ALL METADATA FIELDS:
 CRITICAL: Return ALL fields for YouTube videos, not just title, url, and duration.
 IMPORTANT: Return ONLY valid JSON. No additional text.
 """
+
+def generate_quiz_prompt(questions_context, number_of_questions, experience_level):
+    return f"""
+You are an AI quiz generator for technical interviews.
+
+CRITICAL JSON RULES (MUST FOLLOW):
+- Output MUST be valid JSON
+- No markdown fences (no ```json or ```)
+- No comments, no trailing commas
+- Use only double quotes
+- Escape newlines as \\n
+- Escape quotes as \\"
+- NO text outside JSON
+
+Context Questions (use as reference for difficulty and topics):
+{questions_context}
+
+Task:
+Generate {number_of_questions} multiple-choice quiz questions.
+Experience Level: {experience_level} years
+
+EACH QUESTION MUST HAVE:
+1. question (string)
+2. options (array of exactly 4 strings)
+3. correctAnswer (integer: 0-3 for option index)
+4. explanation (detailed explanation of correct answer)
+
+IMPORTANT:
+- Questions should be based on the context difficulty/topics
+- Options should be plausible but only one correct
+- Explanations should be clear and educational
+- Code examples should use markdown code blocks
+
+Return JSON array format:
+[
+    {{
+        "question": "What is...?",
+        "options": ["Option A", "Option B", "Option C", "Option D"],
+        "correctAnswer": 0,
+        "explanation": "Detailed explanation..."
+    }}
+]
+
+Return ONLY the JSON array, nothing else.
+"""
+
+def evaluate_quiz_prompt(questions, answers):
+    return f"""
+Evaluate this quiz submission.
+
+Questions with answers:
+{json.dumps(questions, indent=2)}
+
+User's selected answers (indexes):
+{json.dumps(answers, indent=2)}
+
+Calculate:
+1. Score (correct/total)
+2. For each question: whether correct, correct answer, explanation
+
+Return JSON format:
+{{
+    "score": 8,
+    "total": 10,
+    "percentage": 80.0,
+    "questions": [
+        {{
+            "question": "...",
+            "userAnswer": 0,
+            "correctAnswer": 0,
+            "isCorrect": true,
+            "explanation": "..."
+        }}
+    ],
+    "feedback": "General performance feedback..."
+}}
+
+Return ONLY valid JSON.
+"""

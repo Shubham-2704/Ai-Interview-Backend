@@ -221,3 +221,33 @@ async def ai_grammar_correct_service(text: str, user_id: str):
     
     return {"correctedText": response}
     
+async def generate_with_gemini(prompt: str, user_id: str) -> str:
+    """
+    Generic function to generate content with Gemini
+    Used by quiz controller and other services
+    """
+    user = await users.find_one({"_id": ObjectId(user_id)})
+    
+    if not user or "geminiApiKey" not in user:
+        raise HTTPException(400, "Gemini key not configured.")
+
+    try:
+        api_key = decrypt(user["geminiApiKey"])
+        
+        # Generate content using Gemini
+        text = GeminiService.generate(api_key, prompt)
+        
+        return text
+        
+    except ResourceExhausted:
+        raise HTTPException(403, "Gemini API quota limit exceeded. Please try again later.")
+    except PermissionDenied:
+        raise HTTPException(403, "Invalid Gemini API key. Please update your API key in settings.")
+    except ServerError:
+        raise HTTPException(500, "Gemini service is temporarily unavailable. Please try again later.")
+    except TooManyRequests:
+        raise HTTPException(429, "Too many requests. Please slow down and try again.")
+    except Exception as e:
+        if "RESOURCE_EXHAUSTED" in str(e):
+            raise HTTPException(403, "Free-tier quota exceeded. Please try again later.")
+        raise HTTPException(500, f"Failed to generate content: {str(e)}")
