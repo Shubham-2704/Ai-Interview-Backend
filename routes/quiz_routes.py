@@ -64,3 +64,11 @@ async def get_topic_performance(
     user = Depends(protect)
 ):
     return await get_topic_performance_service(session_id, user)
+
+@router.post("/{quiz_id}/track-time")
+async def track_question_time(
+    quiz_id: str,
+    data: TrackTimeRequest,
+    user = Depends(protect)
+):
+    return await track_question_time_service(quiz_id, data.questionIndex, user)

@@ -25,3 +25,6 @@ class QuizResult(BaseModel):
     feedback: str
     timeSpent: int
     completedAt: datetime
+
+class TrackTimeRequest(BaseModel):
+    questionIndex: int
