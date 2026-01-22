@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 from bson import ObjectId
 from datetime import datetime, timedelta
+from typing import List, Optional
 from config.database import database
 from utils.helper import *
 from models.quiz_model import *
@@ -60,22 +61,31 @@ async def generate_quiz_service(session_id: str, number_of_questions: int, user)
             if not 0 <= q.get("correctAnswer", -1) <= 3:
                 raise ValueError(f"Question {i+1} has invalid correctAnswer index")
         
-        # 6. Create quiz document
+        # 6. Calculate time limits
+        TIME_PER_QUESTION = 180  # 3 minutes in seconds
+        total_time_limit = number_of_questions * TIME_PER_QUESTION
+        
+        # 7. Create quiz document with time limits
         quiz_doc = {
             "sessionId": ObjectId(session_id),
             "userId": ObjectId(user["id"]),
             "questions": quiz_questions,
             "totalQuestions": number_of_questions,
+            "timeLimitPerQuestion": TIME_PER_QUESTION,
+            "totalTimeLimit": total_time_limit,
             "sessionInfo": {
                 "role": session.get("role"),
                 "experience": session.get("experience"),
                 "topics": session.get("topicsToFocus")
             },
             "createdAt": datetime.now(),
-            "status": "active",  # active, completed, expired
+            "status": "active",  # active, completed, expired, auto_submitted
             "score": None,
             "submittedAt": None,
-            "timeSpent": None
+            "timeSpent": None,
+            "userAnswers": [None] * number_of_questions,
+            "questionStartTimes": [datetime.now().isoformat()] + [None] * (number_of_questions - 1),
+            "currentQuestion": 0
         }
         
         result = await quizzes.insert_one(quiz_doc)
@@ -87,7 +97,6 @@ async def generate_quiz_service(session_id: str, number_of_questions: int, user)
             quiz_data.append({
                 "question": q["question"],
                 "options": q["options"]
-                # Don't include correctAnswer or explanation yet
             })
         
         return {
@@ -95,6 +104,8 @@ async def generate_quiz_service(session_id: str, number_of_questions: int, user)
             "quizId": quiz_id,
             "questions": quiz_data,
             "totalQuestions": number_of_questions,
+            "timeLimitPerQuestion": TIME_PER_QUESTION,
+            "totalTimeLimit": total_time_limit,
             "sessionInfo": quiz_doc["sessionInfo"],
             "createdAt": quiz_doc["createdAt"].isoformat()
         }
@@ -105,7 +116,7 @@ async def generate_quiz_service(session_id: str, number_of_questions: int, user)
         print(f"Error generating quiz: {e}")
         raise HTTPException(500, f"Failed to generate quiz: {str(e)}")
 
-async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int, user):
+async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int, user, is_auto_submit: bool = False):
     # 1. Get quiz
     quiz = await quizzes.find_one({"_id": ObjectId(quiz_id)})
     if not quiz:
@@ -114,19 +125,26 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
     if quiz.get("userId") != ObjectId(user["id"]):
         raise HTTPException(403, "Not authorized")
     
-    if quiz.get("status") == "completed":
+    if quiz.get("status") in ["completed", "auto_submitted"]:
         raise HTTPException(400, "Quiz already submitted")
     
     # 2. Validate answers length
     if len(answers) != quiz.get("totalQuestions"):
         raise HTTPException(400, f"Invalid number of answers. Expected {quiz.get('totalQuestions')}, got {len(answers)}")
     
-    # 3. Validate answer indices
+    # 3. Handle unanswered questions for auto-submit
+    processed_answers = []
     for i, answer in enumerate(answers):
-        if answer is None:
+        if answer is None and is_auto_submit:
+            processed_answers.append(-1)  # Mark as not answered for auto-submit
+        elif answer is None and not is_auto_submit:
             raise HTTPException(400, f"Question {i+1} not answered")
-        if not 0 <= answer <= 3:
+        elif not -1 <= answer <= 3:
             raise HTTPException(400, f"Invalid answer index for question {i+1}")
+        else:
+            processed_answers.append(answer)
+    
+    answers = processed_answers
     
     # 4. Evaluate with AI
     try:
@@ -150,18 +168,56 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
             result_data["total"] = len(quiz["questions"])
             result_data["percentage"] = (correct_count / len(quiz["questions"])) * 100
         
-        # 6. Update quiz with results
+        # 6. Create results with time tracking
+        results_with_options = []
+        ai_questions = result_data.get("questions", [])
+        
+        for i, original_q in enumerate(quiz["questions"]):
+            result_item = {
+                "question": original_q.get("question", ""),
+                "options": original_q.get("options", []),
+                "userAnswer": answers[i] if i < len(answers) else None,
+                "correctAnswer": original_q.get("correctAnswer"),
+                "isCorrect": answers[i] == original_q.get("correctAnswer") if i < len(answers) and answers[i] != -1 else False,
+                "explanation": "",
+                "timeSpentOnQuestion": 0
+            }
+            
+            # Calculate time spent on this question
+            if i < len(quiz.get("questionStartTimes", [])) and quiz["questionStartTimes"][i]:
+                try:
+                    start_time = datetime.fromisoformat(quiz["questionStartTimes"][i])
+                    if i + 1 < len(quiz["questionStartTimes"]) and quiz["questionStartTimes"][i + 1]:
+                        end_time = datetime.fromisoformat(quiz["questionStartTimes"][i + 1])
+                    else:
+                        end_time = datetime.now()
+                    time_spent_on_q = int((end_time - start_time).total_seconds())
+                    # Cap at time limit per question
+                    result_item["timeSpentOnQuestion"] = min(time_spent_on_q, quiz.get("timeLimitPerQuestion", 180))
+                except Exception as e:
+                    print(f"Error calculating time for question {i}: {e}")
+                    result_item["timeSpentOnQuestion"] = 0
+            
+            # Add explanation from AI if available
+            if i < len(ai_questions) and "explanation" in ai_questions[i]:
+                result_item["explanation"] = ai_questions[i]["explanation"]
+            
+            results_with_options.append(result_item)
+        
+        # 7. Update quiz with submission type
+        submission_type = "auto" if is_auto_submit else "manual"
         update_data = {
             "status": "completed",
             "userAnswers": answers,
             "score": result_data["score"],
             "totalQuestions": result_data.get("total", len(quiz["questions"])),
             "percentage": result_data.get("percentage", 0),
-            "results": result_data.get("questions", []),
+            "results": results_with_options,
             "feedback": result_data.get("feedback", ""),
             "timeSpent": time_spent,
             "submittedAt": datetime.now(),
-            "completedAt": datetime.now()
+            "completedAt": datetime.now(),
+            "submissionType": submission_type
         }
         
         await quizzes.update_one(
@@ -169,17 +225,21 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
             {"$set": update_data}
         )
         
-        # 7. Return results
+        # 8. Return results with time data
         return {
             "success": True,
             "quizId": quiz_id,
             "score": update_data["score"],
             "total": update_data["totalQuestions"],
             "percentage": update_data["percentage"],
-            "questions": update_data["results"],
+            "questions": results_with_options,
             "feedback": update_data["feedback"],
             "timeSpent": time_spent,
-            "completedAt": update_data["completedAt"].isoformat()
+            "totalTimeLimit": quiz.get("totalTimeLimit", 0),
+            "timeLimitPerQuestion": quiz.get("timeLimitPerQuestion", 180),
+            "completedAt": update_data["completedAt"].isoformat(),
+            "submissionType": submission_type,
+            "timePerQuestion": [q.get("timeSpentOnQuestion", 0) for q in results_with_options]
         }
         
     except HTTPException:
@@ -196,7 +256,16 @@ async def get_quiz_results_service(quiz_id: str, user):
     if quiz.get("userId") != ObjectId(user["id"]):
         raise HTTPException(403, "Not authorized")
     
-    return serialize_doc(quiz)
+    # Serialize the document
+    result = serialize_doc(quiz)
+    
+    # Add time per question data if available
+    if "results" in result:
+        result["timePerQuestion"] = [
+            q.get("timeSpentOnQuestion", 0) for q in result["results"]
+        ]
+    
+    return result
 
 async def get_user_quizzes_service(session_id: str, user):
     quizzes_list = await quizzes.find({
@@ -329,7 +398,8 @@ async def get_quiz_analytics_service(session_id: str, time_range: str, user):
                 "score": q.get("score", 0),
                 "total": q.get("totalQuestions", 0),
                 "percentage": q.get("percentage", 0),
-                "timeSpent": q.get("timeSpent", 0)
+                "timeSpent": q.get("timeSpent", 0),
+                "submissionType": q.get("submissionType", "manual")
             }
             for q in filtered_quizzes[:5]  # Last 5 quizzes
         ]
@@ -386,3 +456,41 @@ async def get_topic_performance_service(session_id: str, user):
     return {
         "topicPerformance": topic_performance
     }
+
+# NEW FUNCTION: Track question time
+async def track_question_time_service(quiz_id: str, question_index: int, user):
+    """
+    Track when user moves to a new question
+    """
+    quiz = await quizzes.find_one({"_id": ObjectId(quiz_id)})
+    if not quiz:
+        raise HTTPException(404, "Quiz not found")
+    
+    if quiz.get("userId") != ObjectId(user["id"]):
+        raise HTTPException(403, "Not authorized")
+    
+    if quiz.get("status") != "active":
+        raise HTTPException(400, "Quiz is not active")
+    
+    if question_index < 0 or question_index >= quiz.get("totalQuestions", 0):
+        raise HTTPException(400, "Invalid question index")
+    
+    # Update question start time
+    question_start_times = quiz.get("questionStartTimes", [])
+    if len(question_start_times) <= question_index:
+        # Extend the array if needed
+        question_start_times.extend([None] * (question_index - len(question_start_times) + 1))
+    
+    question_start_times[question_index] = datetime.now().isoformat()
+    
+    update_data = {
+        "currentQuestion": question_index,
+        "questionStartTimes": question_start_times
+    }
+    
+    await quizzes.update_one(
+        {"_id": ObjectId(quiz_id)},
+        {"$set": update_data}
+    )
+    
+    return {"success": True, "message": "Time tracked for question"}
