@@ -150,14 +150,34 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
             result_data["total"] = len(quiz["questions"])
             result_data["percentage"] = (correct_count / len(quiz["questions"])) * 100
         
-        # 6. Update quiz with results
+         # Create results with options from original questions
+        results_with_options = []
+        ai_questions = result_data.get("questions", [])
+        
+        for i, original_q in enumerate(quiz["questions"]):
+            result_item = {
+                "question": original_q.get("question", ""),
+                "options": original_q.get("options", []),  # CRITICAL: Keep options
+                "userAnswer": answers[i] if i < len(answers) else None,
+                "correctAnswer": original_q.get("correctAnswer"),
+                "isCorrect": answers[i] == original_q.get("correctAnswer") if i < len(answers) else False,
+                "explanation": ""
+            }
+            
+            # Add explanation from AI if available
+            if i < len(ai_questions) and "explanation" in ai_questions[i]:
+                result_item["explanation"] = ai_questions[i]["explanation"]
+            
+            results_with_options.append(result_item)
+        
+        # 6. Update quiz
         update_data = {
             "status": "completed",
             "userAnswers": answers,
             "score": result_data["score"],
             "totalQuestions": result_data.get("total", len(quiz["questions"])),
             "percentage": result_data.get("percentage", 0),
-            "results": result_data.get("questions", []),
+            "results": results_with_options,  # CHANGE THIS LINE: Use results_with_options
             "feedback": result_data.get("feedback", ""),
             "timeSpent": time_spent,
             "submittedAt": datetime.now(),
@@ -176,7 +196,7 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
             "score": update_data["score"],
             "total": update_data["totalQuestions"],
             "percentage": update_data["percentage"],
-            "questions": update_data["results"],
+            "questions": results_with_options, 
             "feedback": update_data["feedback"],
             "timeSpent": time_spent,
             "completedAt": update_data["completedAt"].isoformat()
