@@ -17,6 +17,7 @@ users = database["users"]
 sessions = database["sessions"]
 questions = database["questions"]
 study_materials = database["study_materials"]
+quizzes = database["quizzes"]
 
 async def check_admin_access(user_id: str):
     """Check if user is admin"""
@@ -65,13 +66,16 @@ async def get_dashboard_stats(
     # 4. Total Study Materials
     total_study_materials = await study_materials.count_documents({})
     
-    # 5. Active Users Today
+    # 5. Total Quizzes (NEW)
+    total_quizzes = await quizzes.count_documents({})
+    
+    # 6. Active Users Today
     today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
     active_users_today = await users.count_documents({
         "updatedAt": {"$gte": today_start}
     })
     
-    # 6. Average Session Time (in minutes)
+    # 7. Average Session Time (in minutes)
     pipeline_avg_time = [
         {
             "$match": {
@@ -89,29 +93,56 @@ async def get_dashboard_stats(
     avg_duration_result = await sessions.aggregate(pipeline_avg_time).to_list(1)
     if avg_duration_result and avg_duration_result[0].get("avgDuration"):
         avg_duration_seconds = avg_duration_result[0]["avgDuration"]
-        # Assuming duration is stored in seconds, convert to minutes
         avg_session_time_minutes = avg_duration_seconds / 60
     else:
-        avg_session_time_minutes = 30.0  # Default fallback
-        
-    # 7. Sessions per day (for chart)
+        avg_session_time_minutes = 30.0
+    
+    # 8. Average Quiz Score (NEW)
+    pipeline_avg_quiz_score = [
+        {
+            "$match": {
+                "status": "completed",
+                "percentage": {"$exists": True, "$ne": None}
+            }
+        },
+        {
+            "$group": {
+                "_id": None,
+                "avgQuizScore": {"$avg": "$percentage"}
+            }
+        }
+    ]
+    
+    avg_quiz_score_result = await quizzes.aggregate(pipeline_avg_quiz_score).to_list(1)
+    avg_quiz_score = round(avg_quiz_score_result[0]["avgQuizScore"], 1) if avg_quiz_score_result and avg_quiz_score_result[0].get("avgQuizScore") else 0
+    
+    # 9. Active Quizzes Today (NEW)
+    active_quizzes_today = await quizzes.count_documents({
+        "createdAt": {"$gte": today_start}
+    })
+    
+    # 10. Sessions per day (for chart)
     sessions_per_day = await get_sessions_per_day(start_date, now)
     
-    # 8. Top Performing Users (based on sessions count)
+    # 11. Quizzes per day (NEW)
+    quizzes_per_day = await get_quizzes_per_day(start_date, now)
+    
+    # 12. Top Performing Users (updated to include quiz data)
     top_users = await get_top_performing_users(limit=5)
     
-    # 9. Recent Users (last 7 days)
+    # 13. Recent Users (last 7 days)
     recent_users = await get_recent_users(limit=5)
     
-    # 10. System Status
-    try:        
-        # Call the REAL function
+    # 14. Recent Quizzes (NEW)
+    recent_quizzes = await get_recent_quizzes(limit=5)
+    
+    # 15. System Status
+    try:
         system_result = await get_system_status()
         
         if system_result.get("status") == "success":
             system_status = system_result["data"]
         else:
-            # Fallback if system controller returns error
             system_status = {
                 "apiResponseTime": 150,
                 "databaseUsage": 0,
@@ -123,7 +154,6 @@ async def get_dashboard_stats(
             
     except Exception as e:
         print(f"Error getting system status: {e}")
-        # Fallback
         system_status = {
             "apiResponseTime": 150,
             "databaseUsage": 0,
@@ -132,21 +162,20 @@ async def get_dashboard_stats(
             "totalRequests": 0,
             "errorRate": 0.5
         }
-        
-        # 11. Users by Role Distribution (NEW)
+    
+    # 16. Users by Role Distribution
     users_by_role_pipeline = [
-            {
-                "$group": {
-                    "_id": "$role",
-                    "count": {"$sum": 1}
-                }
+        {
+            "$group": {
+                "_id": "$role",
+                "count": {"$sum": 1}
             }
-        ]
+        }
+    ]
     
     role_cursor = users.aggregate(users_by_role_pipeline)
     users_by_role_list = await serialize_cursor(role_cursor)
     
-    # Convert to object format expected by frontend
     users_by_role = {}
     for item in users_by_role_list:
         role_name = item["_id"]
@@ -154,25 +183,161 @@ async def get_dashboard_stats(
             role_name = "user"
         users_by_role[role_name] = item["count"]
     
-    # Ensure all roles exist in response
     for role in ["user", "admin", "moderator"]:
         if role not in users_by_role:
             users_by_role[role] = 0
     
-    # Return data directly without wrapper
+    # Return data with quiz statistics
     return {
         "totalUsers": total_users,
         "totalSessions": total_sessions,
         "totalQuestions": total_questions,
         "totalStudyMaterials": total_study_materials,
+        "totalQuizzes": total_quizzes,  # NEW
         "activeUsersToday": active_users_today,
+        "activeQuizzesToday": active_quizzes_today,  # NEW
         "avgSessionTime":  round(float(avg_session_time_minutes), 1),
+        "avgQuizScore": avg_quiz_score,  # NEW
         "sessionsPerDay": sessions_per_day,
+        "quizzesPerDay": quizzes_per_day,  # NEW
         "topUsers": top_users,
         "recentUsers": recent_users,
+        "recentQuizzes": recent_quizzes,  # NEW
         "systemStatus": system_status,
         "usersByRole": users_by_role,
     }
+
+async def get_recent_quizzes(limit: int = 5) -> List[Dict]:
+    """Get recently created quizzes"""
+    pipeline = [
+        {
+            "$sort": {"createdAt": -1}
+        },
+        {
+            "$limit": limit
+        },
+        {
+            "$lookup": {
+                "from": "users",
+                "localField": "userId",
+                "foreignField": "_id",
+                "as": "user_info"
+            }
+        },
+        {
+            "$unwind": "$user_info"
+        },
+        {
+            "$lookup": {
+                "from": "sessions",
+                "localField": "sessionId",
+                "foreignField": "_id",
+                "as": "session_info"
+            }
+        },
+        {
+            "$unwind": "$session_info"
+        },
+        {
+            "$project": {
+                "_id": 1,
+                "totalQuestions": 1,
+                "score": 1,
+                "percentage": 1,
+                "status": 1,
+                "createdAt": 1,
+                "user": {
+                    "id": {"$toString": "$user_info._id"},
+                    "name": "$user_info.name",
+                    "email": "$user_info.email",
+                    "profileImageUrl": "$user_info.profileImageUrl"
+                },
+                "session": {
+                    "id": {"$toString": "$session_info._id"},
+                    "role": "$session_info.role",
+                    "experience": "$session_info.experience"
+                }
+            }
+        }
+    ]
+    
+    cursor = quizzes.aggregate(pipeline)
+    results = await serialize_cursor(cursor)
+    
+    formatted_results = []
+    for quiz in results:
+        formatted_results.append({
+            "id": str(quiz.get("_id")),
+            "totalQuestions": quiz.get("totalQuestions", 0),
+            "score": quiz.get("score", 0),
+            "percentage": quiz.get("percentage", 0),
+            "status": quiz.get("status", "active"),
+            "createdAt": quiz.get("createdAt").strftime("%b %d, %H:%M") if quiz.get("createdAt") else "N/A",
+            "user": quiz.get("user", {}),
+            "session": quiz.get("session", {})
+        })
+    
+    return formatted_results
+
+# Add this new function to get quizzes per day
+async def get_quizzes_per_day(start_date: datetime, end_date: datetime) -> List[Dict]:
+    """Get quizzes count per day for the last 7 days"""
+    
+    pipeline = [
+        {
+            "$project": {
+                "dateOnly": {
+                    "$dateToString": {
+                        "format": "%Y-%m-%d",
+                        "date": "$createdAt"
+                    }
+                }
+            }
+        },
+        {
+            "$match": {
+                "dateOnly": {
+                    "$gte": start_date.strftime("%Y-%m-%d"),
+                    "$lte": end_date.strftime("%Y-%m-%d")
+                }
+            }
+        },
+        {
+            "$group": {
+                "_id": "$dateOnly",
+                "count": {"$sum": 1}
+            }
+        },
+        {
+            "$sort": {"_id": 1}
+        },
+        {
+            "$project": {
+                "date": "$_id",
+                "quizzes": "$count",
+                "_id": 0
+            }
+        }
+    ]
+    
+    results = await quizzes.aggregate(pipeline).to_list(None)
+    
+    # Generate chart data for last 7 days
+    chart_data = []
+    for i in range(6, -1, -1):
+        chart_date = end_date - timedelta(days=i)
+        date_str = chart_date.strftime("%Y-%m-%d")
+        day_abbr = chart_date.strftime("%a")
+        
+        matching = next((r for r in results if r["date"] == date_str), None)
+        
+        chart_data.append({
+            "date": date_str,
+            "day": day_abbr,
+            "quizzes": matching["quizzes"] if matching else 0
+        })
+    
+    return chart_data
 
 async def get_sessions_per_day(start_date: datetime, end_date: datetime) -> List[Dict]:
     """Get sessions count per day for the last 7 days - FIXED VERSION"""
@@ -240,7 +405,7 @@ async def get_sessions_per_day(start_date: datetime, end_date: datetime) -> List
     return chart_data
 
 async def get_top_performing_users(limit: int = 5) -> List[Dict]:
-    """Get top performing users based on session count"""
+    """Get top performing users based on session, question, and quiz counts"""
     pipeline = [
         {
             "$lookup": {
@@ -267,6 +432,14 @@ async def get_top_performing_users(limit: int = 5) -> List[Dict]:
             }
         },
         {
+            "$lookup": {
+                "from": "quizzes",
+                "localField": "_id",
+                "foreignField": "userId",
+                "as": "user_quizzes"
+            }
+        },
+        {
             "$project": {
                 "_id": 1,
                 "name": 1,
@@ -274,20 +447,11 @@ async def get_top_performing_users(limit: int = 5) -> List[Dict]:
                 "profileImageUrl": 1,
                 "sessionCount": {"$size": "$user_sessions"},
                 "questionCount": {"$size": "$user_questions"},
-                "score": {
+                "quizCount": {"$size": "$user_quizzes"},
+                "avgQuizScore": {
                     "$cond": [
-                        {"$gt": [{"$size": "$user_sessions"}, 0]},
-                        {
-                            "$multiply": [
-                                100,
-                                {
-                                    "$divide": [
-                                        {"$size": "$user_questions"},
-                                        {"$multiply": [{"$size": "$user_sessions"}, 20]}
-                                    ]
-                                }
-                            ]
-                        },
+                        {"$gt": [{"$size": {"$filter": {"input": "$user_quizzes", "cond": {"$ne": ["$$this.percentage", None]}}}}, 0]},
+                        {"$avg": "$user_quizzes.percentage"},
                         0
                     ]
                 }
@@ -295,14 +459,11 @@ async def get_top_performing_users(limit: int = 5) -> List[Dict]:
         },
         {
             "$match": {
-                "sessionCount": {"$gt": 0}
+                "$or": [
+                    {"sessionCount": {"$gt": 0}},
+                    {"quizCount": {"$gt": 0}}
+                ]
             }
-        },
-        {
-            "$sort": {"score": -1, "sessionCount": -1}
-        },
-        {
-            "$limit": limit
         },
         {
             "$project": {
@@ -312,25 +473,41 @@ async def get_top_performing_users(limit: int = 5) -> List[Dict]:
                 "profileImageUrl": 1,
                 "sessions": "$sessionCount",
                 "questions": "$questionCount",
-                "score": {"$round": ["$score", 1]}
+                "quizzes": "$quizCount",
+                "score": {
+                    "$add": [
+                        {"$multiply": ["$sessionCount", 0.3]},
+                        {"$multiply": ["$questionCount", 0.2]},
+                        {"$multiply": ["$quizCount", 0.4]},
+                        {"$multiply": ["$avgQuizScore", 0.1]}
+                    ]
+                },
+                "avgQuizScore": {"$round": ["$avgQuizScore", 1]}
             }
+        },
+        {
+            "$sort": {"score": -1}
+        },
+        {
+            "$limit": limit
         }
     ]
     
     cursor = users.aggregate(pipeline)
     results = await serialize_cursor(cursor)
     
-    # Format the results for frontend
     formatted_results = []
     for user in results:
         formatted_results.append({
-            "id": str(user.get("_id")),  # Convert ObjectId to string
+            "id": str(user.get("_id")),
             "name": user.get("name", ""),
             "email": user.get("email", ""),
             "profileImageUrl": user.get("profileImageUrl", ""),
             "sessions": user.get("sessions", 0),
             "questions": user.get("questions", 0),
-            "score": user.get("score", 0)
+            "quizzes": user.get("quizzes", 0),  # NEW
+            "avgQuizScore": user.get("avgQuizScore", 0),  # NEW
+            "score": round(user.get("score", 0), 1)
         })
     
     return formatted_results
@@ -470,7 +647,7 @@ async def get_admin_users_list(
         week_ago = datetime.now(timezone.utc) - timedelta(days=7)
         filter_query["updatedAt"] = {"$lt": week_ago}
     
-    # Get users with session, question, and material counts
+    # Get users with session, question, material, and quiz counts
     pipeline = [
         {"$match": filter_query},
         {
@@ -481,7 +658,7 @@ async def get_admin_users_list(
                 "as": "user_sessions"
             }
         },
-        # FLEXIBLE MATERIALS LOOKUP - tries multiple field names
+        # FLEXIBLE MATERIALS LOOKUP
         {
             "$lookup": {
                 "from": "study_materials",
@@ -491,18 +668,12 @@ async def get_admin_users_list(
                         "$match": {
                             "$expr": {
                                 "$or": [
-                                    # Try user_id as ObjectId
                                     {"$eq": ["$user_id", "$$userId"]},
-                                    # Try user_id as string
                                     {"$eq": ["$user_id", "$$userIdStr"]},
-                                    # Try user field as ObjectId
                                     {"$eq": ["$user", "$$userId"]},
-                                    # Try user field as string
                                     {"$eq": ["$user", "$$userIdStr"]},
-                                    # Try createdBy field
                                     {"$eq": ["$createdBy", "$$userId"]},
                                     {"$eq": ["$createdBy", "$$userIdStr"]},
-                                    # Try userId field
                                     {"$eq": ["$userId", "$$userId"]},
                                     {"$eq": ["$userId", "$$userIdStr"]}
                                 ]
@@ -543,6 +714,15 @@ async def get_admin_users_list(
                 "as": "user_questions"
             }
         },
+        # ADD THIS: Lookup for quizzes
+        {
+            "$lookup": {
+                "from": "quizzes",
+                "localField": "_id",
+                "foreignField": "userId",
+                "as": "user_quizzes"
+            }
+        },
         {
             "$project": {
                 "_id": 1,
@@ -561,7 +741,8 @@ async def get_admin_users_list(
                 },
                 "sessionCount": {"$size": "$user_sessions"},
                 "materialCount": {"$size": "$user_materials"},
-                "questionCount": {"$size": "$user_questions"}
+                "questionCount": {"$size": "$user_questions"},
+                "quizCount": {"$size": "$user_quizzes"}  # ADD THIS LINE
             }
         },
         {"$sort": {"createdAt": -1}},
@@ -571,14 +752,6 @@ async def get_admin_users_list(
     
     cursor = users.aggregate(pipeline)
     users_list = await serialize_cursor(cursor)
-    
-    # Debug: Check what we're getting
-    # print(f"\n=== DEBUG: Found {len(users_list)} users ===")
-    # for i, user in enumerate(users_list):
-    #     print(f"User {i+1}: {user.get('name')}")
-    #     print(f"  Sessions: {user.get('sessionCount')}")
-    #     print(f"  Materials: {user.get('materialCount')}")
-    #     print(f"  Questions: {user.get('questionCount')}")
     
     # Format users list
     formatted_users = []
@@ -594,7 +767,8 @@ async def get_admin_users_list(
             "isActive": user.get("isActive", False),
             "sessionCount": user.get("sessionCount", 0),
             "materialCount": user.get("materialCount", 0),
-            "questionCount": user.get("questionCount", 0)
+            "questionCount": user.get("questionCount", 0),
+            "quizCount": user.get("quizCount", 0)  # ADD THIS LINE
         })
     
     # Get total count for pagination
@@ -684,20 +858,37 @@ async def get_admin_user_details(
     if session_ids:
         total_questions = await questions.count_documents({"session": {"$in": session_ids}})
     
-    # Add questions count to each session
+    # Add questions count and quiz data to each session
     for session in user_sessions:
-        session["questionCount"] = await questions.count_documents({"session": ObjectId(session["id"])})
-        session["materialCount"] = await study_materials.count_documents({"session_id": session["id"]})
+        session_id = ObjectId(session["id"])
+        
+        # Count questions
+        session["questionCount"] = await questions.count_documents({"session": session_id})
+        
+        # Count materials
+        session["materialCount"] = await study_materials.count_documents({"session_id": str(session_id)})
+        
+        # Count quizzes for this session
+        session["quizCount"] = await quizzes.count_documents({"sessionId": session_id})
+        
+        # Calculate average quiz score for this session
+        if session["quizCount"] > 0:
+            session_quizzes = await quizzes.find({"sessionId": session_id, "status": "completed"}).to_list(None)
+            if session_quizzes:
+                total_score = sum(q.get("percentage", 0) for q in session_quizzes)
+                session["avgQuizScore"] = round(total_score / len(session_quizzes), 1)
+            else:
+                session["avgQuizScore"] = 0
+        else:
+            session["avgQuizScore"] = 0
     
     # Serialize user document
     user_data = serialize_doc(user)
     
     # Remove password only
     user_data.pop("password", None)
-    # DO NOT remove geminiApiKey - COMMENT OUT OR DELETE THIS LINE:
-    # user_data.pop("geminiApiKey", None)
     
-    # INSTEAD: Decrypt the Gemini API key if it exists
+    # Decrypt the Gemini API key if it exists
     if user_data.get("geminiApiKey"):
         try:
             decrypted_key = decrypt(user_data["geminiApiKey"])
@@ -709,6 +900,23 @@ async def get_admin_user_details(
         # If there's no Gemini API key in the database, set it to empty string
         user_data["geminiApiKey"] = ""
     
+    # Calculate total quizzes for stats
+    total_quizzes = await quizzes.count_documents({"userId": ObjectId(user_id)})
+    
+    # Calculate average quiz score for stats
+    if total_quizzes > 0:
+        completed_quizzes = await quizzes.find({"userId": ObjectId(user_id), "status": "completed"}).to_list(None)
+        if completed_quizzes:
+            total_score = sum(q.get("percentage", 0) for q in completed_quizzes)
+            avg_quiz_score = round(total_score / len(completed_quizzes), 1)
+            quiz_completion_rate = round((len(completed_quizzes) / total_quizzes) * 100, 1)
+        else:
+            avg_quiz_score = 0
+            quiz_completion_rate = 0
+    else:
+        avg_quiz_score = 0
+        quiz_completion_rate = 0
+    
     # Return data directly without wrapper
     return {
         "user": user_data,
@@ -717,6 +925,9 @@ async def get_admin_user_details(
             "totalSessions": len(user_sessions),
             "totalQuestions": total_questions,
             "totalMaterials": await study_materials.count_documents({"user_id": user_id}),
+            "totalQuizzes": total_quizzes,
+            "avgQuizScore": avg_quiz_score,
+            "quizCompletionRate": quiz_completion_rate,
             "avgQuestionsPerSession": len(user_sessions) and total_questions / len(user_sessions) or 0,
             "completionRate": await calculate_user_completion_rate(user_id),
             "lastLogin": user.get("updatedAt"),
@@ -1619,3 +1830,269 @@ async def get_admin_study_materials_by_question(
     )
     
     return combined_materials
+
+# ---------- Get User Quiz Statistics (NEW) ----------
+async def get_user_quiz_stats(
+    request: Request,
+    user_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get quiz statistics for a specific user"""
+    await check_admin_access(current_user["id"])
+    
+    # Check if user exists
+    user = await users.find_one({"_id": ObjectId(user_id)})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # 1. Total quizzes taken by this user
+    total_quizzes = await quizzes.count_documents({"userId": ObjectId(user_id)})
+    
+    # 2. Average quiz score for completed quizzes
+    pipeline_avg_quiz_score = [
+        {
+            "$match": {
+                "userId": ObjectId(user_id),
+                "status": "completed",
+                "percentage": {"$exists": True, "$ne": None}
+            }
+        },
+        {
+            "$group": {
+                "_id": None,
+                "avgQuizScore": {"$avg": "$percentage"},
+                "totalQuestionsAttempted": {"$sum": "$totalQuestions"},
+                "totalCompleted": {"$sum": 1}
+            }
+        }
+    ]
+    
+    quiz_stats_result = await quizzes.aggregate(pipeline_avg_quiz_score).to_list(1)
+    
+    if quiz_stats_result and quiz_stats_result[0]:
+        avg_quiz_score = round(quiz_stats_result[0].get("avgQuizScore", 0), 1)
+        total_questions_attempted = quiz_stats_result[0].get("totalQuestionsAttempted", 0)
+        total_completed = quiz_stats_result[0].get("totalCompleted", 0)
+        quiz_completion_rate = round((total_completed / total_quizzes * 100), 1) if total_quizzes > 0 else 0
+    else:
+        avg_quiz_score = 0
+        total_questions_attempted = 0
+        quiz_completion_rate = 0
+    
+    # 3. Get session-wise quiz counts
+    session_quiz_pipeline = [
+        {
+            "$match": {
+                "userId": ObjectId(user_id)
+            }
+        },
+        {
+            "$group": {
+                "_id": "$sessionId",
+                "quizCount": {"$sum": 1},
+                "avgScore": {"$avg": "$percentage"}
+            }
+        }
+    ]
+    
+    session_quiz_cursor = quizzes.aggregate(session_quiz_pipeline)
+    session_quizzes_list = await serialize_cursor(session_quiz_cursor)
+    
+    # Format session quiz data
+    session_quizzes = {}
+    for item in session_quizzes_list:
+        session_id = str(item["_id"])
+        avg_score = item.get("avgScore")
+        session_quizzes[session_id] = {
+            "quizCount": item.get("quizCount", 0),
+            "avgScore": round(avg_score, 1) if avg_score else 0
+        }
+    
+    return {
+        "totalQuizzes": total_quizzes,
+        "avgQuizScore": avg_quiz_score,
+        "totalQuestionsAttempted": total_questions_attempted,
+        "quizCompletionRate": quiz_completion_rate,
+        "sessionQuizzes": session_quizzes
+    }
+
+async def get_admin_session_quizzes(
+    request: Request,
+    session_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get quizzes for a specific session (admin)"""
+    await check_admin_access(current_user["id"])
+    
+    # Verify session exists
+    session = await sessions.find_one({"_id": ObjectId(session_id)})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Get all quizzes for this session
+    pipeline = [
+        {
+            "$match": {
+                "sessionId": ObjectId(session_id)
+            }
+        },
+        {
+            "$lookup": {
+                "from": "users",
+                "localField": "userId",
+                "foreignField": "_id",
+                "as": "user_info"
+            }
+        },
+        {
+            "$unwind": "$user_info"
+        },
+        {
+            "$project": {
+                "_id": 1,
+                "title": 1,
+                "description": 1,
+                "totalQuestions": 1,
+                "score": 1,
+                "percentage": 1,
+                "status": 1,
+                "timeSpent": 1,
+                "createdAt": 1,
+                "updatedAt": 1,
+                "user": {
+                    "id": {"$toString": "$user_info._id"},
+                    "name": "$user_info.name",
+                    "email": "$user_info.email",
+                    "profileImageUrl": "$user_info.profileImageUrl"
+                },
+                "sessionId": {"$toString": "$sessionId"}
+            }
+        },
+        {
+            "$sort": {"createdAt": -1}
+        }
+    ]
+    
+    cursor = quizzes.aggregate(pipeline)
+    quizzes_list = await serialize_cursor(cursor)
+    
+    # Format quizzes
+    formatted_quizzes = []
+    for quiz in quizzes_list:
+        formatted_quizzes.append({
+            "id": str(quiz.get("_id")),
+            "title": quiz.get("title", "Quiz"),
+            "description": quiz.get("description", ""),
+            "totalQuestions": quiz.get("totalQuestions", 0),
+            "score": quiz.get("score", 0),
+            "percentage": quiz.get("percentage", 0),
+            "status": quiz.get("status", "active"),
+            "timeSpent": quiz.get("timeSpent", 0),
+            "createdAt": quiz.get("createdAt"),
+            "user": quiz.get("user", {}),
+            "sessionId": quiz.get("sessionId")
+        })
+    
+    return {
+        "quizzes": formatted_quizzes,
+        "total": len(formatted_quizzes),
+        "session": {
+            "id": session_id,
+            "role": session.get("role", ""),
+            "experience": session.get("experience", "")
+        }
+    }
+
+async def get_quiz_results_admin(
+    request: Request,
+    quiz_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get detailed quiz results for admin"""
+    await check_admin_access(current_user["id"])
+    
+    quiz = await quizzes.find_one({"_id": ObjectId(quiz_id)})
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    
+    # Get user info
+    user = await users.find_one({"_id": ObjectId(quiz.get("userId"))})
+    user_info = None
+    if user:
+        user_info = {
+            "id": str(user["_id"]),
+            "name": user.get("name", ""),
+            "email": user.get("email", ""),
+            "profileImageUrl": user.get("profileImageUrl", "")
+        }
+    
+    # Get session info
+    session = await sessions.find_one({"_id": ObjectId(quiz.get("sessionId"))})
+    session_info = None
+    if session:
+        session_info = {
+            "id": str(session["_id"]),
+            "role": session.get("role", ""),
+            "experience": session.get("experience", "")
+        }
+    
+    # Format quiz data
+    quiz_data = serialize_doc(quiz)
+    
+    # Add user and session info
+    quiz_data["user"] = user_info
+    quiz_data["session"] = session_info
+    
+    return quiz_data
+
+async def get_admin_quiz_details(
+    request: Request,
+    quiz_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get detailed quiz results for admin"""
+    await check_admin_access(current_user["id"])
+    
+    quiz = await quizzes.find_one({"_id": ObjectId(quiz_id)})
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    
+    # Get user info
+    user = await users.find_one({"_id": quiz.get("userId")})
+    user_info = None
+    if user:
+        user_info = {
+            "id": str(user["_id"]),
+            "name": user.get("name", ""),
+            "email": user.get("email", ""),
+            "profileImageUrl": user.get("profileImageUrl", "")
+        }
+    
+    # Get session info
+    session = await sessions.find_one({"_id": quiz.get("sessionId")})
+    session_info = None
+    if session:
+        session_info = {
+            "id": str(session["_id"]),
+            "role": session.get("role", ""),
+            "experience": session.get("experience", "")
+        }
+    
+    # Format quiz data
+    quiz_data = serialize_doc(quiz)
+    
+    # Add user and session info
+    quiz_data["user"] = user_info
+    quiz_data["session"] = session_info
+    
+    # Calculate time in proper format
+    if quiz_data.get("timeSpent"):
+        # Convert to minutes if it's in seconds
+        if quiz_data["timeSpent"] > 1000:  # Assuming > 1000 means it's in seconds
+            quiz_data["timeSpentMinutes"] = round(quiz_data["timeSpent"] / 60, 1)
+            quiz_data["timeSpentSeconds"] = quiz_data["timeSpent"]
+        else:
+            quiz_data["timeSpentMinutes"] = quiz_data["timeSpent"]
+            quiz_data["timeSpentSeconds"] = quiz_data["timeSpent"] * 60
+    
+    return quiz_data
