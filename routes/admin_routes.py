@@ -9,14 +9,18 @@ from controllers.admin_controller import (
     get_sessions_stats,
     get_admin_sessions_list,
     get_user_stats_endpoint,
-    admin_create_user,         # Make sure this is imported
+    admin_create_user,
     admin_delete_session,
     get_admin_session_details,
     get_admin_session_questions,
     get_admin_session_study_materials,
-    get_admin_study_materials_by_question
+    get_admin_study_materials_by_question,
+    get_user_quiz_stats,
+    get_admin_session_quizzes,
+    get_admin_quiz_details,
+    get_quiz_results_admin,
 )
-from models.admin_model import DateRangeRequest, AdminCreateUserRequest  # Add AdminCreateUserRequest import
+from models.admin_model import DateRangeRequest, AdminCreateUserRequest
 from middlewares.auth_middlewares import protect
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
@@ -33,9 +37,7 @@ async def dashboard_stats(
     return await get_dashboard_stats(request, date_range, current_user)
 
 # ---------- Users Management Routes ----------
-# ORDER IS IMPORTANT: Specific routes before parameterized routes
-
-@router.post("/users")  # POST /api/admin/users - CREATE user
+@router.post("/users")
 async def admin_create_user_route(
     request: Request,
     data: AdminCreateUserRequest,
@@ -44,8 +46,7 @@ async def admin_create_user_route(
     """Create new user (admin only)"""
     return await admin_create_user(request, data, current_user)
 
-# ✅ ADD THIS MISSING ROUTE HERE
-@router.get("/users/stats")  # GET /api/admin/users/stats
+@router.get("/users/stats")
 async def admin_users_stats(
     request: Request,
     current_user: dict = Depends(protect)
@@ -53,7 +54,7 @@ async def admin_users_stats(
     """Get user statistics"""
     return await get_user_stats_endpoint(request, current_user)
 
-@router.get("/users")  # GET /api/admin/users - LIST users
+@router.get("/users")
 async def admin_get_users(
     request: Request,
     page: int = Query(1, ge=1),
@@ -66,8 +67,7 @@ async def admin_get_users(
     """Get users list with filtering and pagination"""
     return await get_admin_users_list(request, page, limit, search, role, status, current_user)
 
-# Parameterized routes MUST COME AFTER specific routes
-@router.get("/users/{user_id}")  # GET /api/admin/users/{user_id}
+@router.get("/users/{user_id}")
 async def admin_get_user_details(
     request: Request,
     user_id: str,
@@ -76,7 +76,7 @@ async def admin_get_user_details(
     """Get detailed user information"""
     return await get_admin_user_details(request, user_id, current_user)
 
-@router.put("/users/{user_id}")  # PUT /api/admin/users/{user_id}
+@router.put("/users/{user_id}")
 async def admin_update_user_route(
     request: Request,
     user_id: str,
@@ -86,7 +86,7 @@ async def admin_update_user_route(
     """Update user information (admin only)"""
     return await admin_update_user(request, user_id, data, current_user)
 
-@router.delete("/users/{user_id}")  # DELETE /api/admin/users/{user_id}
+@router.delete("/users/{user_id}")
 async def admin_delete_user_route(
     request: Request,
     user_id: str,
@@ -127,6 +127,64 @@ async def admin_delete_session_route(
     """Delete session (admin only)"""
     return await admin_delete_session(request, session_id, current_user)
 
+# ---------- Session Detail Routes ----------
+@router.get("/sessions/{session_id}")
+async def admin_get_session_details(
+    request: Request,
+    session_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get detailed session information"""
+    return await get_admin_session_details(request, session_id, current_user)
+
+@router.get("/sessions/{session_id}/questions")
+async def admin_get_session_questions(
+    request: Request,
+    session_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get questions for a specific session"""
+    return await get_admin_session_questions(request, session_id, current_user)
+
+@router.get("/sessions/{session_id}/study-materials")
+async def admin_get_session_study_materials(
+    request: Request,
+    session_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get study materials for a specific session"""
+    return await get_admin_session_study_materials(request, session_id, current_user)
+
+@router.get("/sessions/{session_id}/quizzes")
+async def admin_get_session_quizzes(
+    request: Request,
+    session_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get quizzes for a specific session"""
+    return await get_admin_session_quizzes(request, session_id, current_user)
+
+# ---------- Study Materials Routes ----------
+@router.get("/study-materials/question/{question_id}")
+async def admin_get_study_materials_by_question(
+    request: Request,
+    question_id: str,
+    session_id: str = Query(None, description="Optional session ID filter"),
+    current_user: dict = Depends(protect)
+):
+    """Get study materials for a specific question"""
+    return await get_admin_study_materials_by_question(request, question_id, session_id, current_user)
+
+# ---------- User Quiz Statistics Route ----------
+@router.get("/users/{user_id}/quiz-stats")
+async def admin_get_user_quiz_stats(
+    request: Request,
+    user_id: str,
+    current_user: dict = Depends(protect)
+):
+    """Get quiz statistics for a specific user"""
+    return await get_user_quiz_stats(request, user_id, current_user)
+
 # ---------- Analytics Route ----------
 @router.get("/analytics")
 async def admin_analytics(
@@ -150,41 +208,22 @@ async def admin_health_check():
         "service": "admin-api"
     }
 
-# ---------- Session Detail Routes ----------
-@router.get("/sessions/{session_id}")  # GET /api/admin/sessions/{session_id}
-async def admin_get_session_details(
+@router.get("/quizzes/{quiz_id}")
+async def admin_get_quiz_details(
     request: Request,
-    session_id: str,
+    quiz_id: str,
     current_user: dict = Depends(protect)
 ):
-    """Get detailed session information"""
-    return await get_admin_session_details(request, session_id, current_user)
+    """Get detailed quiz results"""
+    return await get_quiz_results_admin(request, quiz_id, current_user)
 
-@router.get("/sessions/{session_id}/questions")  # GET /api/admin/sessions/{session_id}/questions
-async def admin_get_session_questions(
+@router.get("/quizzes/{quiz_id}")
+async def admin_get_quiz_details(
     request: Request,
-    session_id: str,
+    quiz_id: str,
     current_user: dict = Depends(protect)
 ):
-    """Get questions for a specific session"""
-    return await get_admin_session_questions(request, session_id, current_user)
+    """Get detailed quiz results"""
+    return await get_admin_quiz_details(request, quiz_id, current_user)
 
-@router.get("/sessions/{session_id}/study-materials")  # GET /api/admin/sessions/{session_id}/study-materials
-async def admin_get_session_study_materials(
-    request: Request,
-    session_id: str,
-    current_user: dict = Depends(protect)
-):
-    """Get study materials for a specific session"""
-    return await get_admin_session_study_materials(request, session_id, current_user)
 
-# ---------- Study Materials Routes ----------
-@router.get("/study-materials/question/{question_id}")  # GET /api/admin/study-materials/question/{question_id}
-async def admin_get_study_materials_by_question(
-    request: Request,
-    question_id: str,
-    session_id: str = Query(None, description="Optional session ID filter"),
-    current_user: dict = Depends(protect)
-):
-    """Get study materials for a specific question"""
-    return await get_admin_study_materials_by_question(request, question_id, session_id, current_user)
