@@ -14,6 +14,7 @@ from models.study_material_model import *
 from models.user_model import *
 from middlewares.auth_middlewares import protect
 from utils.gemini_service import *
+from controllers.settings_controller import get_system_settings
 
 # Collections
 study_materials = database["study_materials"]
@@ -410,18 +411,59 @@ async def get_or_create_study_materials(
     if not session:
         raise HTTPException(404, "Session not found")
     
-    # Check if materials already exist and not forcing refresh
-    if not data.force_refresh:
-        existing = await study_materials.find_one({
-            "question_id": question_id,
+    session_id = str(session["_id"])
+    
+    # Get admin settings FIRST
+    settings = await get_system_settings()
+    max_materials = settings.get("max_study_materials_per_session", 10)
+    refresh_hours = settings.get("study_materials_refresh_hours", 24)
+    
+    # CHECK STUDY MATERIALS LIMIT
+    if max_materials > 0:
+        materials_count = await study_materials.count_documents({
+            "session_id": session_id,
             "user_id": user_id
         })
         
-        if existing:
-            # Check if cache is fresh (less than 7 days old)
-            updated_at = existing.get("updated_at", datetime.utcnow())
-            if datetime.utcnow() - updated_at < timedelta(days=7):
-                return serialize_doc(existing)
+        if materials_count >= max_materials:
+            raise HTTPException(
+                400, 
+                f"You have reached the maximum limit of {max_materials} study material packs for this session. "
+                f"You have created {materials_count} packs."
+            )
+    
+    # Check if materials already exist
+    existing = await study_materials.find_one({
+        "question_id": question_id,
+        "user_id": user_id
+    })
+    
+    # If forcing refresh, skip cooldown check
+    if data.force_refresh:
+        print("🔄 Force refresh requested, skipping cooldown check")
+    elif existing:
+        # Check cooldown period
+        updated_at = existing.get("updated_at")
+        if updated_at:
+            # Convert to datetime if it's a string
+            if isinstance(updated_at, str):
+                try:
+                    updated_at = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+                except:
+                    updated_at = datetime.utcnow()
+            
+            time_since_update = datetime.utcnow() - updated_at
+            hours_since_update = time_since_update.total_seconds() / 3600
+            
+            print(f"⏰ Cooldown check: {hours_since_update:.1f} hours since last update, cooldown: {refresh_hours} hours")
+            
+            if hours_since_update < refresh_hours:
+                hours_remaining = refresh_hours - hours_since_update
+                raise HTTPException(
+                    429,  # Too Many Requests
+                    f"Please wait {hours_remaining:.1f} hours before refreshing this study material. "
+                    f"You can refresh again after {updated_at + timedelta(hours=refresh_hours):%Y-%m-%d %H:%M}"
+                )
     
     # Get user's Gemini API key
     user_doc = await users.find_one({"_id": ObjectId(user_id)})
@@ -439,9 +481,16 @@ async def get_or_create_study_materials(
             user_gemini_key=gemini_key
         )
         
+        # Update total sources count
+        material_categories = ["youtube_links", "articles", "documentation", 
+                              "practice_links", "books", "courses"]
+        total_sources = sum(len(materials_data.get(cat, [])) 
+                           for cat in material_categories)
+        materials_data["total_sources"] = total_sources
+        
         # Prepare study material document
         study_material_doc = {
-            "session_id": str(session["_id"]),
+            "session_id": session_id,
             "question_id": question_id,
             "question_text": question["question"],
             "role": session["role"],
@@ -453,23 +502,35 @@ async def get_or_create_study_materials(
         }
         
         # Save to database
-        if data.force_refresh:
+        if existing and not data.force_refresh:
             # Update existing
             await study_materials.update_one(
-                {"question_id": question_id, "user_id": user_id},
-                {"$set": study_material_doc},
-                upsert=True
+                {"_id": existing["_id"]},
+                {"$set": study_material_doc}
             )
+            material_id = existing["_id"]
         else:
-            # Insert new
-            await study_materials.insert_one(study_material_doc)
+            # Insert new or force refresh creates new
+            result = await study_materials.insert_one(study_material_doc)
+            material_id = result.inserted_id
         
-        return serialize_doc(study_material_doc)
+        # Return the saved document
+        saved_doc = await study_materials.find_one({"_id": material_id})
         
+        return {
+            "success": True,
+            "message": "Study materials generated successfully!" if not existing else "Study materials refreshed successfully!",
+            "data": serialize_doc(saved_doc)
+        }
+        
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
     except Exception as e:
-        print(f"Error generating study materials: {e}")
+        print(f"❌ Error generating study materials: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(500, f"Failed to generate study materials: {str(e)}")
-
+    
 async def get_study_materials_by_question(
     request: Request,
     question_id: str,
@@ -576,3 +637,4 @@ async def delete_study_materials(
         raise HTTPException(404, "Study material not found")
     
     return {"success": True, "message": "Study materials deleted"}
+

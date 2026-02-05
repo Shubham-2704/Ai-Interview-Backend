@@ -69,13 +69,14 @@ async def generate_questions_service(body: dict, user_id: str):
         raise HTTPException(400, "Gemini API key not configured")
 
     api_key = decrypt(user["geminiApiKey"])
+    number_of_questions = body.get("numberOfQuestions")
     print("Decrypted API key",api_key)
 
     prompt = question_answer_prompt(
         body["role"],
         body["experience"],
         body["topicsToFocus"],
-        body["numberOfQuestions"]
+        number_of_questions
     )
 
     try:
