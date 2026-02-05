@@ -12,6 +12,7 @@ from routes.system_routes import router as system_router
 from routes.analytics_routes import router as analytics_router
 from routes.tracking_routes import router as tracking_router
 from routes.quiz_routes import router as quiz_router
+from routes.settings_routes import router as settings_router
 from middlewares.request_tracker import *
 from starlette.staticfiles import StaticFiles
 
@@ -42,6 +43,7 @@ app.include_router(system_router)
 app.include_router(analytics_router)
 app.include_router(tracking_router)
 app.include_router(quiz_router)
+app.include_router(settings_router)
 app.middleware("http")(request_tracker_middleware)
 if os.getenv("ENABLE_BACKEND_TRACKING", "true").lower() == "true":
     from middlewares.tracking_middleware import TrackingMiddleware

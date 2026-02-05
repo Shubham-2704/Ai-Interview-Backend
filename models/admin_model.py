@@ -33,3 +33,7 @@ class AdminCreateUserRequest(BaseModel):
     notes: Optional[str] = None
     joinDate: Optional[str] = None
 
+class SettingsUpdateRequest(BaseModel):
+    name: str = "general_settings"
+    settings: dict  # Simple dict, not complex model
+    updated_by: Optional[str] = None

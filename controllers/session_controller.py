@@ -4,18 +4,11 @@ from bson import ObjectId
 from utils.helper import *
 from models.session_model import *
 from config.database import database
+from middlewares.settings_middlewares import *
+from controllers.settings_controller import *
 
 sessions = database["sessions"]
 questions = database["questions"]
-
-# Create a new session
-from fastapi import HTTPException, Request
-from datetime import datetime
-from bson import ObjectId
-from utils.helper import *
-from models.session_model import *
-from config.database import database
-
 sessions = database["sessions"]
 questions = database["questions"]
 
@@ -23,9 +16,23 @@ questions = database["questions"]
 async def create_new_session(request: Request, data: SessionCreate):
     user = request.state.user
     
+    # Check session limit (ONLY this check)
+    limit_check = await check_session_limit(user["id"])
+    
+    if not limit_check["can_create"]:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "success": False,
+                "message": limit_check["message"],
+                "limit": limit_check["limit"],
+                "current": limit_check["current"]
+            }
+        )
+    
     now = datetime.now()
 
-    # 1️⃣ Create session document
+    # Create session document (NO extra settings)
     session_doc = {
         "user": ObjectId(user["id"]),
         "role": data.role,
@@ -33,9 +40,10 @@ async def create_new_session(request: Request, data: SessionCreate):
         "topicsToFocus": data.topicsToFocus,
         "description": data.description,
         "questions": [],
+        "load_more_clicked": 0,  # ADD THIS: Initialize load more counter
         "createdAt": now,
         "updatedAt": now,
-    }
+    }    
 
     session_result = await sessions.insert_one(session_doc)
     session_id = session_result.inserted_id
@@ -66,18 +74,23 @@ async def create_new_session(request: Request, data: SessionCreate):
     # 3️⃣ Prepare API response (map _id → id)
     # CHANGED: Wrap in "session" key for consistency
     session_response = {
-        "_id": str(session_id),  # CHANGED: Use _id to match get_session_by_id
+        "_id": str(session_id),
         "user": user["id"],
         "role": data.role,
         "experience": data.experience,
         "topicsToFocus": data.topicsToFocus,
         "description": data.description,
-        "questions": [str(qid) for qid in question_ids],
+        "questions": [],
+        "load_more_clicked": 0,  # ADD THIS
         "createdAt": now,
         "updatedAt": now,
+        "limit_info": {
+            "limit": limit_check["limit"],
+            "current": limit_check["current"] + 1,  # +1 for this new session
+            "remaining": limit_check["remaining"] - 1 if limit_check["remaining"] > 0 else 0
+        }
     }
-
-    # CHANGED: Return consistent structure
+    
     return {"success": True, "session": session_response}
 
 # Get my sessions
@@ -141,3 +154,35 @@ async def delete_session(request: Request, session_id: str):
         "success": True,
         "message": "Session deleted successfully"
     }
+
+# Increment load more counter for a session
+async def increment_load_more_counter(request: Request, session_id: str):
+    user = request.state.user
+    
+    try:
+        # Get the session
+        session = await sessions.find_one({
+            "_id": ObjectId(session_id),
+            "user": ObjectId(user["id"])
+        })
+        
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Get current load more count
+        current_count = session.get("load_more_clicked", 0)
+        
+        # Increment the count
+        await sessions.update_one(
+            {"_id": ObjectId(session_id)},
+            {"$set": {"load_more_clicked": current_count + 1}}
+        )
+        
+        return {
+            "success": True,
+            "message": "Load more count updated",
+            "load_more_clicked": current_count + 1
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
