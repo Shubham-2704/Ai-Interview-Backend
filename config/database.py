@@ -8,7 +8,8 @@ load_dotenv()
 MONGO_DETAILS = os.getenv("MONGO_URI")
 
 client = AsyncIOMotorClient(MONGO_DETAILS)
-database = client["ai-interview-platform"]
+# database = client["ai-interview-platform"]       #local
+database = client["intervia"]                   #atlas
 users = database["users"]
 
 @asynccontextmanager

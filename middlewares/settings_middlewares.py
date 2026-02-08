@@ -33,7 +33,8 @@ async def check_session_limit(user_id: str):
                 "limit": max_sessions,
                 "current": session_count,
                 "remaining": 0,
-                "message": f"You have reached the maximum limit of {max_sessions} sessions, Please delete existing sessions to create new ones."
+                # "message": f"You have reached the maximum limit of {max_sessions} sessions, Please delete existing sessions to create new ones."
+                "message": f"Session limit reached, delete existing sessions to create new ones."
             }
         
         return {
