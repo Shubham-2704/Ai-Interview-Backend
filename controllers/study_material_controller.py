@@ -23,16 +23,23 @@ sessions = database["sessions"]
 questions = database["questions"]
 
 # Tavily Search API (Free tier available)
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY") 
 TAVILY_API_URL = os.getenv("TAVILY_API_URL")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY") 
 YOUTUBE_API_URL = os.getenv("YOUTUBE_API_URL")
 
 async def search_with_tavily(query: str, max_results: int = 5) -> List[Dict]:
-    """Search using Tavily API (free tier available)"""
+    
+    # Get system settings to get the Tavily API key
+    settings = await get_system_settings()
+    tavily_api_key = settings.get("tavily_api_key", "")
+    
+    if not tavily_api_key:
+        print("⚠️ Tavily API key not configured in system settings")
+        return []
+    
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {TAVILY_API_KEY}"
+        "Authorization": f"Bearer {tavily_api_key}"
     }
     
     payload = {
@@ -637,4 +644,3 @@ async def delete_study_materials(
         raise HTTPException(404, "Study material not found")
     
     return {"success": True, "message": "Study materials deleted"}
-

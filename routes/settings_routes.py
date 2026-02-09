@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Request, HTTPException
-from controllers.settings_controller import get_system_settings, update_system_settings
+from controllers.settings_controller import get_system_settings, update_system_settings, get_tavily_api_usage
 from middlewares.auth_middlewares import protect
 
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
@@ -48,3 +48,17 @@ async def get_public_questions_count():
         "study_materials_refresh_hours": settings.get("study_materials_refresh_hours", 24),
     }
 
+@router.get("/tavily-usage")
+async def get_tavily_usage(
+    request: Request,
+    current_user: dict = Depends(protect)
+):
+    """Get Tavily API usage and credit balance (admin only)"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    usage_data = await get_tavily_api_usage()
+    return {
+        "success": True,
+        "data": usage_data
+    }
