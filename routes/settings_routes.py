@@ -62,3 +62,22 @@ async def get_tavily_usage(
         "success": True,
         "data": usage_data
     }
+
+# In settings_routes.py
+@router.get("/public/general")
+async def get_public_general_settings():
+    """Get general settings (no authentication required)"""
+    try:
+        settings = await get_system_settings()
+        return {
+            "success": True,
+            "allow_registration": settings.get("allow_registration", True),
+            "maintenance_mode": settings.get("maintenance_mode", False),
+        }
+    except Exception as e:
+        print(f"Error getting public settings: {e}")
+        return {
+            "success": False,
+            "allow_registration": True,
+            "maintenance_mode": False,
+        }

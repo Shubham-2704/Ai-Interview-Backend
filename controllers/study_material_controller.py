@@ -21,6 +21,7 @@ study_materials = database["study_materials"]
 users = database["users"]
 sessions = database["sessions"]
 questions = database["questions"]
+settings_collection = database["system_settings"]
 
 # Tavily Search API (Free tier available)
 TAVILY_API_URL = os.getenv("TAVILY_API_URL")
@@ -28,37 +29,49 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 YOUTUBE_API_URL = os.getenv("YOUTUBE_API_URL")
 
 async def search_with_tavily(query: str, max_results: int = 5) -> List[Dict]:
-    
-    # Get system settings to get the Tavily API key
-    settings = await get_system_settings()
-    tavily_api_key = settings.get("tavily_api_key", "")
-    
-    if not tavily_api_key:
-        print("⚠️ Tavily API key not configured in system settings")
-        return []
-    
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {tavily_api_key}"
-    }
-    
-    payload = {
-        "query": query,
-        "search_depth": "advanced",
-        "max_results": max_results,
-        "include_answer": True,
-        "include_raw_content": False,
-        "include_images": True
-    }
-    
     try:
-        response = requests.post(TAVILY_API_URL, json=payload, headers=headers)
+        # 🔐 Get encrypted Tavily API key directly from DB
+        settings_doc = await settings_collection.find_one(
+            {"name": "general_settings"},
+            {"tavily_api_key": 1}
+        )
+
+        encrypted_key = settings_doc.get("tavily_api_key") if settings_doc else None
+
+        if not encrypted_key:
+            print("⚠️ Tavily API key not configured in system settings")
+            return []
+
+        # 🔓 Decrypt key for Tavily API call
+        tavily_api_key = decrypt(encrypted_key)
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {tavily_api_key}"
+        }
+
+        payload = {
+            "query": query,
+            "search_depth": "advanced",
+            "max_results": max_results,
+            "include_answer": True,
+            "include_raw_content": False,
+            "include_images": True
+        }
+
+        response = requests.post(
+            TAVILY_API_URL,
+            json=payload,
+            headers=headers,
+            timeout=15
+        )
         response.raise_for_status()
+
         data = response.json()
-        
+
         results = []
         for item in data.get("results", []):
-            result = {
+            results.append({
                 "title": item.get("title", ""),
                 "url": item.get("url", ""),
                 "content": item.get("content", ""),
@@ -67,10 +80,10 @@ async def search_with_tavily(query: str, max_results: int = 5) -> List[Dict]:
                 "author": item.get("author", ""),
                 "site_name": item.get("site_name", ""),
                 "type": _determine_content_type(item.get("url", ""))
-            }
-            results.append(result)
-        
+            })
+
         return results
+
     except Exception as e:
         print(f"Tavily search error: {e}")
         return []

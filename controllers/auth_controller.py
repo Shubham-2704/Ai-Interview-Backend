@@ -1,6 +1,7 @@
 from config.database import database
 from fastapi import Request, Depends
 from middlewares.auth_middlewares import protect
+from controllers.settings_controller import *
 from models.user_model import *
 from utils.hash import hash_password, verify_password
 from utils.auth import generate_token, verify_google_token
@@ -75,6 +76,10 @@ async def register_user(data: UserCreate):
 
 # Google signup
 async def google_signup(data: GoogleSignupRequest):
+    """Handle Google signup/login"""
+    # ✅ First, check if registration is allowed
+    settings = await get_system_settings()
+    
     # Verify Google token
     google_user = await verify_google_token(data.token)
     
@@ -91,11 +96,13 @@ async def google_signup(data: GoogleSignupRequest):
         # Extract name from email if not provided
         name = email.split('@')[0]
     
+    # Check if user already exists
     existing_user = await users.find_one({"email": email})
     
     now = datetime.now(timezone.utc)
     
     if existing_user:
+        # ✅ EXISTING USER: Always allow login
         await users.update_one(
             {"_id": existing_user["_id"]},
             {"$set": {"updatedAt": now}}
@@ -127,6 +134,10 @@ async def google_signup(data: GoogleSignupRequest):
             role=role
         )
     else:
+        # ✅ NEW USER: Check if registration is allowed
+        if not settings.get("allow_registration", True):
+            return error_response(403, "New registrations are currently closed. Please try again later.")
+        
         # Create new user
         new_user = {
             "name": name,
@@ -156,7 +167,7 @@ async def google_signup(data: GoogleSignupRequest):
             geminiKeyMasked=None,
             role="user"
         )
-
+    
 # Verify Admin Token
 async def verify_admin_token(token_data: AdminTokenVerify):
     admin_fixed_token = os.getenv("ADMIN_FIXED_TOKEN")
