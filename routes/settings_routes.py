@@ -1,3 +1,4 @@
+# routes/settings_routes.py
 from fastapi import APIRouter, Depends, Request, HTTPException
 from controllers.settings_controller import get_system_settings, update_system_settings, get_tavily_api_usage
 from middlewares.auth_middlewares import protect
@@ -72,12 +73,10 @@ async def get_public_general_settings():
         return {
             "success": True,
             "allow_registration": settings.get("allow_registration", True),
-            "maintenance_mode": settings.get("maintenance_mode", False),
         }
     except Exception as e:
         print(f"Error getting public settings: {e}")
         return {
             "success": False,
             "allow_registration": True,
-            "maintenance_mode": False,
         }

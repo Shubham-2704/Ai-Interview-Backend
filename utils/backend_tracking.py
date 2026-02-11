@@ -7,11 +7,6 @@ from fastapi import Request, HTTPException
 import requests
 from config.database import database
 
-# MongoDB collections
-user_tracking = database["user_tracking"]
-page_views = database["page_views"]
-events = database["events"]
-
 # Google Analytics Measurement Protocol (for backend tracking)
 GA_MEASUREMENT_ID = os.getenv("GA4_MEASUREMENT_ID")
 GA_API_SECRET = os.getenv("GA4_API_SECRET")  # Optional: For enhanced tracking
@@ -49,9 +44,6 @@ async def track_page_view(
         "method": request.method,
         "url": str(request.url)
     }
-    
-    # Store in MongoDB
-    await page_views.insert_one(tracking_data)
     
     # Also send to Google Analytics via Measurement Protocol
     await send_to_google_analytics({
@@ -94,9 +86,6 @@ async def track_event(
         "additional_params": additional_params or {}
     }
     
-    # Store in MongoDB
-    await events.insert_one(event_data)
-    
     # Send to Google Analytics
     await send_to_google_analytics({
         "client_id": user_id or session_id,
@@ -131,8 +120,6 @@ async def track_user_session(
         "user_agent": data.get("user_agent") if data else None,
         "ip_address": data.get("ip_address") if data else None
     }
-    
-    await database["user_tracking"].insert_one(session_data)
 
 async def send_to_google_analytics(payload: Dict):
     """Send data to Google Analytics Measurement Protocol"""
