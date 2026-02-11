@@ -15,6 +15,8 @@ from utils.otp import *
 from utils.email import *
 
 users = database["users"]
+reset_otps = database["password_reset_otps"]
+reset_limits = database["password_reset_limits"]
 
 # Register User
 async def register_user(data: UserCreate):
@@ -60,6 +62,21 @@ async def register_user(data: UserCreate):
         else None
     )
 
+    try:
+        # Get settings to check if welcome email is enabled
+        settings = await get_system_settings()
+        if settings.get("send_welcome_email", True):
+            # Send welcome email in background (don't block response)
+            import asyncio
+            asyncio.create_task(
+                send_welcome_email_async(
+                    to_email=data.email,
+                    user_name=data.name
+                )
+            )
+    except Exception as e:
+        print(f"Error scheduling welcome email: {e}")
+        # Don't fail registration if email fails
 
     return UserResponse(
         id=user_id,
@@ -154,6 +171,19 @@ async def google_signup(data: GoogleSignupRequest):
         
         result = await users.insert_one(new_user)
         user_id = str(result.inserted_id)
+
+        try:
+            if settings.get("send_welcome_email", True):
+                # Send welcome email in background
+                import asyncio
+                asyncio.create_task(
+                    send_welcome_email_async(
+                        to_email=email,
+                        user_name=name
+                    )
+                )
+        except Exception as e:
+            print(f"Error scheduling welcome email for Google user: {e}")
         
         return UserResponse(
             id=user_id,
@@ -298,7 +328,7 @@ async def update_profile(request: Request, data: UserProfileUpdate, user_data = 
         "role": updated_user.get("role")
     }
 
-reset_otps = database["password_reset_otps"]
+# Forgot Password - Step 1: Request OTP
 async def forgot_password(data: ForgotPasswordRequest):
     user = await users.find_one({"email": data.email})
     if not user:
@@ -306,92 +336,138 @@ async def forgot_password(data: ForgotPasswordRequest):
 
     now = datetime.now(timezone.utc)
 
-    # 🛑 BLOCK CHECK
-    existing = await reset_otps.find_one({"userId": user["_id"]})
-    if existing and existing.get("blockedUntil"):
-        blocked_until = existing["blockedUntil"]
+    # ✅ GET SETTINGS
+    settings = await get_system_settings()
+    max_attempts = settings.get("max_password_reset_attempts", 3)
+    block_duration_hours = settings.get("password_reset_block_duration_hours", 1)
+    otp_expiry_minutes = settings.get("password_reset_otp_expiry_minutes", 5)
+    block_duration = timedelta(hours=block_duration_hours)
+
+    # 🛑 BLOCK CHECK (FROM reset_limits)
+    limit = await reset_limits.find_one({"userId": user["_id"]})
+    if limit and limit.get("blockedUntil"):
+        blocked_until = limit["blockedUntil"]
         if blocked_until.tzinfo is None:
             blocked_until = blocked_until.replace(tzinfo=timezone.utc)
 
         if now < blocked_until:
             minutes_left = int((blocked_until - now).total_seconds() / 60)
-            return error_response(
-                429,
-                f"Too many attempts. Try again after {minutes_left} minutes"
-            )
+            hours_left = minutes_left // 60
+            minutes_remainder = minutes_left % 60
 
+            if hours_left > 0:
+                return error_response(
+                    429,
+                    f"Too many attempts. Try again after {hours_left} hours"
+                )
+            else:
+                return error_response(
+                    429,
+                    f"Too many attempts. Try again after {minutes_remainder} minutes"
+                )
+
+    # 🔐 GENERATE OTP
     otp = generate_otp()
-    now = datetime.now(timezone.utc)
 
+    # 🔑 STORE OTP (OTP COLLECTION ONLY)
     await reset_otps.update_one(
         {"userId": user["_id"]},
-        {
-            "$set": {
-                "userId": user["_id"],
-                "email": user["email"],
-                "otp": hash_password(otp),
-                "expiresAt": now + timedelta(minutes=5),  # ✅ 5 MIN
-                "attempts": 0,
-                "blockedUntil": None,
-                "createdAt": now
-            }
-        },
+        {"$set": {
+            "userId": user["_id"],
+            "email": user["email"],
+            "otp": hash_password(otp),
+            "expiresAt": now + timedelta(minutes=otp_expiry_minutes),
+            "createdAt": now
+        }},
         upsert=True
     )
 
+    # 📧 SEND EMAIL
     send_otp_email(
         to_email=user["email"],
         user_name=user["name"],
         otp=otp,
-        expiry_minutes=5
+        expiry_minutes=otp_expiry_minutes
     )
 
     return {
         "message": "OTP sent to your email",
-        "expiresIn": 300  # seconds
+        "expiresIn": otp_expiry_minutes * 60
     }
 
-MAX_ATTEMPTS = 3
-BLOCK_DURATION = timedelta(hours=1)
-
+# Forgot Password - Step 2: Verify OTP
 async def verify_reset_otp(data: VerifyOtpRequest):
+    settings = await get_system_settings()
+    max_attempts = settings.get("max_password_reset_attempts", 3)
+    block_duration_hours = settings.get("password_reset_block_duration_hours", 1)
+    block_duration = timedelta(hours=block_duration_hours)
+
     record = await reset_otps.find_one({"email": data.email})
     if not record:
         return error_response(400, "OTP expired or invalid")
 
     now = datetime.now(timezone.utc)
 
-    # 🛑 BLOCK CHECK
-    blocked_until = record.get("blockedUntil")
-    if blocked_until:
+    # 🛑 BLOCK CHECK (FROM reset_limits)
+    limit = await reset_limits.find_one({"userId": record["userId"]})
+    if limit and limit.get("blockedUntil"):
+        blocked_until = limit["blockedUntil"]
         if blocked_until.tzinfo is None:
             blocked_until = blocked_until.replace(tzinfo=timezone.utc)
 
         if now < blocked_until:
             minutes_left = int((blocked_until - now).total_seconds() / 60)
-            return error_response(
-                429,
-                f"Try again after {minutes_left} minutes"
-            )
+            hours_left = minutes_left // 60
+            minutes_remainder = minutes_left % 60
+
+            if hours_left > 0:
+                return error_response(429, f"Try again after {hours_left} hours")
+            else:
+                return error_response(429, f"Try again after {minutes_remainder} minutes")
 
     # ❌ WRONG OTP
     if not verify_password(data.otp, record["otp"]):
-        attempts = record.get("attempts", 0) + 1
-        update = {"attempts": attempts}
+        attempts = (limit.get("attempts", 0) if limit else 0) + 1
 
-        if attempts >= MAX_ATTEMPTS:
-            update["blockedUntil"] = now + BLOCK_DURATION
+        # 🔒 MAX ATTEMPTS REACHED
+        if attempts >= max_attempts:
+            await reset_limits.update_one(
+                {"userId": record["userId"]},
+                {"$set": {
+                    "attempts": attempts,
+                    "blockedUntil": now + block_duration,
+                    "updatedAt": now
+                }},
+                upsert=True
+            )
 
+            return error_response(
+                400,
+                f"Maximum attempts ({max_attempts}) reached. Account blocked for {block_duration_hours} hours"
+            )
 
-        await reset_otps.update_one(
-            {"_id": record["_id"]},
-            {"$set": update}
+        # 🔁 UPDATE ATTEMPTS
+        await reset_limits.update_one(
+            {"userId": record["userId"]},
+            {"$set": {
+                "attempts": attempts,
+                "updatedAt": now
+            }},
+            upsert=True
         )
 
-        return error_response(400, "Invalid OTP")
+        remaining = max_attempts - attempts
+        return error_response(
+            400,
+            f"Invalid OTP. You have {remaining} attempt(s) remaining"
+        )
+
+    # ✅ OTP CORRECT → CLEAR LIMITS
+    await reset_limits.delete_one({"userId": record["userId"]})
 
     return success_response("OTP verified successfully")
 
+# Forgot Password - Step 3: Reset Password
 async def reset_password(data: ResetPasswordRequest):
     record = await reset_otps.find_one({"email": data.email})
     user = await users.find_one({"email": data.email})

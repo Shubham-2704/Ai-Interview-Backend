@@ -22,8 +22,11 @@ async def get_system_settings():
             # Create default if not exists
             default_settings = {
                 "name": "general_settings",
+                "send_welcome_email": True,
                 "allow_registration": True,
-                "maintenance_mode": False,
+                "max_password_reset_attempts": 3,
+                "password_reset_block_duration_hours": 1,
+                "password_reset_otp_expiry_minutes": 5,
                 "max_sessions_per_user": 1,
                 "number_of_questions": 10,
                 "load_more_questions": 5,
@@ -37,8 +40,11 @@ async def get_system_settings():
             }
             await settings_collection.insert_one(default_settings)
             return {
+                "send_welcome_email": True,
                 "allow_registration": True,
-                "maintenance_mode": False,
+                "max_password_reset_attempts": 3,
+                "password_reset_block_duration_hours": 1,
+                "password_reset_otp_expiry_minutes": 5,
                 "max_sessions_per_user": 1,
                 "number_of_questions": 10,
                 "load_more_questions": 5,
@@ -51,8 +57,11 @@ async def get_system_settings():
         
         # Return all settings
         return {
-            "allow_registration": settings.get("allow_registration", True),  
-            "maintenance_mode": settings.get("maintenance_mode", False),  
+            "send_welcome_email": settings.get("send_welcome_email", True),
+            "allow_registration": settings.get("allow_registration", True), 
+            "max_password_reset_attempts": settings.get("max_password_reset_attempts", 3),
+            "password_reset_block_duration_hours": settings.get("password_reset_block_duration_hours", 1),
+            "password_reset_otp_expiry_minutes": settings.get("password_reset_otp_expiry_minutes", 5), 
             "max_sessions_per_user": settings.get("max_sessions_per_user", 1),
             "number_of_questions": settings.get("number_of_questions", 10),
             "load_more_questions": settings.get("load_more_questions", 5),
@@ -68,8 +77,11 @@ async def get_system_settings():
     except Exception as e:
         print(f"Error getting settings: {e}")
         return {
-            "allow_registration": True,  
-            "maintenance_mode": False,  
+            "send_welcome_email": True,
+            "allow_registration": True, 
+            "max_password_reset_attempts": 3,
+            "password_reset_block_duration_hours": 1,
+            "password_reset_otp_expiry_minutes": 5, 
             "max_sessions_per_user": 1,
             "number_of_questions": 10,
             "load_more_questions": 5,
@@ -91,11 +103,20 @@ async def update_system_settings(settings_data: dict):
         }
         
         # Add all settings fields (only include what's provided)
+        if "send_welcome_email" in settings_data:  # Add this line
+            update_data["send_welcome_email"] = settings_data["send_welcome_email"]
+
         if "allow_registration" in settings_data:
             update_data["allow_registration"] = settings_data["allow_registration"]
+
+        if "max_password_reset_attempts" in settings_data:
+            update_data["max_password_reset_attempts"] = settings_data["max_password_reset_attempts"]
         
-        if "maintenance_mode" in settings_data:
-            update_data["maintenance_mode"] = settings_data["maintenance_mode"]
+        if "password_reset_block_duration_hours" in settings_data:
+            update_data["password_reset_block_duration_hours"] = settings_data["password_reset_block_duration_hours"]
+        
+        if "password_reset_otp_expiry_minutes" in settings_data:
+            update_data["password_reset_otp_expiry_minutes"] = settings_data["password_reset_otp_expiry_minutes"]
 
         if "max_sessions_per_user" in settings_data:
             update_data["max_sessions_per_user"] = settings_data["max_sessions_per_user"]
