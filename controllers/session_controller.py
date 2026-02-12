@@ -6,6 +6,7 @@ from models.session_model import *
 from config.database import database
 from middlewares.settings_middlewares import *
 from controllers.settings_controller import *
+from controllers.notification_controller import *  
 
 sessions = database["sessions"]
 questions = database["questions"]
@@ -70,9 +71,14 @@ async def create_new_session(request: Request, data: SessionCreate):
             {"_id": session_id},
             {"$set": {"questions": question_ids}}
         )
-
+    
+    await session_success_notification(
+            user_id=user["id"],
+            role=data.role,
+            session_id=str(session_id)
+        )
+    
     # 3️⃣ Prepare API response (map _id → id)
-    # CHANGED: Wrap in "session" key for consistency
     session_response = {
         "_id": str(session_id),
         "user": user["id"],

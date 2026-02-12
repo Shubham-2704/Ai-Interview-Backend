@@ -1,10 +1,11 @@
 from fastapi import HTTPException
 from bson import ObjectId
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List
 from config.database import database
 from utils.helper import *
 from models.quiz_model import *
+from controllers.notification_controller import *
 from controllers.ai_controller import generate_with_gemini, parse_gemini_json_response
 from utils.prompt import generate_quiz_prompt, evaluate_quiz_prompt
 import json
@@ -90,6 +91,16 @@ async def generate_quiz_service(session_id: str, number_of_questions: int, user)
         
         result = await quizzes.insert_one(quiz_doc)
         quiz_id = str(result.inserted_id)
+
+        # SEND QUIZ START NOTIFICATION
+        try:
+            await quiz_start_success_notification(
+                user_id=user["id"],
+                session_id=session_id,
+                number_of_questions=number_of_questions
+            )
+        except Exception as e:
+            print(f"⚠️ Failed to send quiz start notification: {e}")
         
         # Return quiz data (without answers for security)
         quiz_data = []
@@ -136,7 +147,7 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
     processed_answers = []
     for i, answer in enumerate(answers):
         if answer is None and is_auto_submit:
-            processed_answers.append(-1)  # Mark as not answered for auto-submit
+            processed_answers.append(-1)
         elif answer is None and not is_auto_submit:
             raise HTTPException(400, f"Question {i+1} not answered")
         elif not -1 <= answer <= 3:
@@ -192,7 +203,6 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
                     else:
                         end_time = datetime.now()
                     time_spent_on_q = int((end_time - start_time).total_seconds())
-                    # Cap at time limit per question
                     result_item["timeSpentOnQuestion"] = min(time_spent_on_q, quiz.get("timeLimitPerQuestion", 180))
                 except Exception as e:
                     print(f"Error calculating time for question {i}: {e}")
@@ -219,13 +229,25 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
             "completedAt": datetime.now(),
             "submissionType": submission_type
         }
-        
+
+        # ✅ Update the database
         await quizzes.update_one(
             {"_id": ObjectId(quiz_id)},
             {"$set": update_data}
         )
-        
-        # 8. Return results with time data
+
+        # ✅ Send notification (ONLY ONE)
+        session_id = str(quiz.get("sessionId"))
+        await quiz_submitted_notification(
+            user_id=user["id"],
+            session_id=session_id,
+            score=update_data["score"],
+            total=update_data["totalQuestions"],
+            percentage=update_data["percentage"],
+            submission_type=submission_type
+        )
+
+        # 8. Return results
         return {
             "success": True,
             "quizId": quiz_id,
@@ -244,9 +266,6 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
         
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"Error evaluating quiz: {e}")
-        raise HTTPException(500, f"Failed to evaluate quiz: {str(e)}")
 
 async def get_quiz_results_service(quiz_id: str, user):
     quiz = await quizzes.find_one({"_id": ObjectId(quiz_id)})
