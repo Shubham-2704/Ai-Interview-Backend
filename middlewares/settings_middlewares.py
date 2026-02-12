@@ -2,6 +2,7 @@ from fastapi import HTTPException
 from bson import ObjectId
 from config.database import database
 from controllers.settings_controller import get_system_settings
+from controllers.notification_controller import *
 
 sessions = database["sessions"]
 
@@ -27,13 +28,12 @@ async def check_session_limit(user_id: str):
         # Count user's sessions
         session_count = await sessions.count_documents({"user": ObjectId(user_id)})
         
-        if session_count >= max_sessions:
+        if session_count >= max_sessions:            
             return {
                 "can_create": False,
                 "limit": max_sessions,
                 "current": session_count,
                 "remaining": 0,
-                # "message": f"You have reached the maximum limit of {max_sessions} sessions, Please delete existing sessions to create new ones."
                 "message": f"Session limit reached, delete existing sessions to create new ones."
             }
         
