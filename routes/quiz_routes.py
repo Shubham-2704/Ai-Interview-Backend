@@ -26,7 +26,9 @@ async def submit_quiz(
         quiz_id,
         data.answers,
         data.timeSpent,
-        user
+        user,
+        data.isAutoSubmit if hasattr(data, 'isAutoSubmit') else False,
+        data.submissionType if hasattr(data, 'submissionType') else SUBMISSION_TYPE["MANUAL"]
     )
 
 @router.get("/{quiz_id}/results")
@@ -39,9 +41,11 @@ async def get_quiz_results(
 @router.get("/session/{session_id}")
 async def get_session_quizzes(
     session_id: str,
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(10, ge=1, le=50, description="Items per page"),
     user = Depends(protect)
 ):
-    return await get_user_quizzes_service(session_id, user)
+    return await get_user_quizzes_service(session_id, user, page, limit)
 
 @router.delete("/{quiz_id}")
 async def delete_quiz(
@@ -72,3 +76,10 @@ async def track_question_time(
     user = Depends(protect)
 ):
     return await track_question_time_service(quiz_id, data.questionIndex, user)
+
+@router.get("/session/{session_id}/submission-stats")
+async def get_submission_stats(
+    session_id: str,
+    user = Depends(protect)
+):
+    return await get_submission_stats_service(session_id, user)

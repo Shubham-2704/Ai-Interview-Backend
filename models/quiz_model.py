@@ -16,6 +16,8 @@ class QuizSubmission(BaseModel):
     quizId: str
     answers: List[int] = Field(..., min_items=1)  # List of selected option indexes
     timeSpent: Optional[int] = 0  # in seconds
+    isAutoSubmit: Optional[bool] = False
+    submissionType: Optional[str] = "manual"  # manual, auto, abandoned, back_button, refresh
 
 class QuizResult(BaseModel):
     score: int

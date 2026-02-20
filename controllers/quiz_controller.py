@@ -1,7 +1,7 @@
 from fastapi import HTTPException
 from bson import ObjectId
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 from config.database import database
 from utils.helper import *
 from models.quiz_model import *
@@ -14,6 +14,15 @@ users = database["users"]
 sessions = database["sessions"]
 questions = database["questions"]
 quizzes = database["quizzes"]
+
+# Constants
+SUBMISSION_TYPE = {
+    "MANUAL": "manual",
+    "AUTO": "auto",
+    "ABANDONED": "abandoned",
+    "BACK_BUTTON": "back_button",
+    "REFRESH": "refresh"
+}
 
 async def generate_quiz_service(session_id: str, number_of_questions: int, user):
     # 1. Get session and its questions
@@ -86,7 +95,8 @@ async def generate_quiz_service(session_id: str, number_of_questions: int, user)
             "timeSpent": None,
             "userAnswers": [None] * number_of_questions,
             "questionStartTimes": [datetime.now().isoformat()] + [None] * (number_of_questions - 1),
-            "currentQuestion": 0
+            "currentQuestion": 0,
+            "submissionType": None  # Will be set when submitted
         }
         
         result = await quizzes.insert_one(quiz_doc)
@@ -125,9 +135,23 @@ async def generate_quiz_service(session_id: str, number_of_questions: int, user)
         raise
     except Exception as e:
         print(f"Error generating quiz: {e}")
-        raise HTTPException(500, f"Failed to generate quiz: {str(e)}")
+        raise HTTPException(500, f"Failed to generate quiz, Please try again later.")
 
-async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int, user, is_auto_submit: bool = False):
+async def submit_quiz_service(
+    quiz_id: str, 
+    answers: List[int], 
+    time_spent: int, 
+    user, 
+    is_auto_submit: bool = False,
+    submission_type: str = SUBMISSION_TYPE["MANUAL"]
+):
+
+    if isinstance(answers, str):
+        try:
+            answers = json.loads(answers)
+        except:
+            raise HTTPException(400, "Invalid answers format")
+        
     # 1. Get quiz
     quiz = await quizzes.find_one({"_id": ObjectId(quiz_id)})
     if not quiz:
@@ -136,20 +160,20 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
     if quiz.get("userId") != ObjectId(user["id"]):
         raise HTTPException(403, "Not authorized")
     
-    if quiz.get("status") in ["completed", "auto_submitted"]:
+    if quiz.get("status") in ["completed", "auto_submitted", "abandoned", "refresh_submitted", "navigation_submitted"]:
         raise HTTPException(400, "Quiz already submitted")
     
     # 2. Validate answers length
     if len(answers) != quiz.get("totalQuestions"):
         raise HTTPException(400, f"Invalid number of answers. Expected {quiz.get('totalQuestions')}, got {len(answers)}")
     
-    # 3. Handle unanswered questions for auto-submit
+    # 3. Handle unanswered questions
     processed_answers = []
+    unanswered_count = 0
     for i, answer in enumerate(answers):
-        if answer is None and is_auto_submit:
+        if answer is None or answer == -1:
             processed_answers.append(-1)
-        elif answer is None and not is_auto_submit:
-            raise HTTPException(400, f"Question {i+1} not answered")
+            unanswered_count += 1
         elif not -1 <= answer <= 3:
             raise HTTPException(400, f"Invalid answer index for question {i+1}")
         else:
@@ -170,7 +194,7 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
         # 5. Calculate score manually as backup
         correct_count = 0
         for i, q in enumerate(quiz["questions"]):
-            if i < len(answers) and answers[i] == q.get("correctAnswer"):
+            if i < len(answers) and answers[i] != -1 and answers[i] == q.get("correctAnswer"):
                 correct_count += 1
         
         # Use AI evaluation or fallback to manual calculation
@@ -184,12 +208,16 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
         ai_questions = result_data.get("questions", [])
         
         for i, original_q in enumerate(quiz["questions"]):
+            is_correct = False
+            if i < len(answers) and answers[i] != -1:
+                is_correct = answers[i] == original_q.get("correctAnswer")
+            
             result_item = {
                 "question": original_q.get("question", ""),
                 "options": original_q.get("options", []),
                 "userAnswer": answers[i] if i < len(answers) else None,
                 "correctAnswer": original_q.get("correctAnswer"),
-                "isCorrect": answers[i] == original_q.get("correctAnswer") if i < len(answers) and answers[i] != -1 else False,
+                "isCorrect": is_correct,
                 "explanation": "",
                 "timeSpentOnQuestion": 0
             }
@@ -214,10 +242,20 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
             
             results_with_options.append(result_item)
         
-        # 7. Update quiz with submission type
-        submission_type = "auto" if is_auto_submit else "manual"
+        # 7. Set status based on submission type
+        status_map = {
+            SUBMISSION_TYPE["MANUAL"]: "completed",
+            SUBMISSION_TYPE["AUTO"]: "auto_submitted",
+            SUBMISSION_TYPE["ABANDONED"]: "abandoned",
+            SUBMISSION_TYPE["BACK_BUTTON"]: "navigation_submitted",
+            SUBMISSION_TYPE["REFRESH"]: "refresh_submitted"
+        }
+        
+        status = status_map.get(submission_type, "completed")
+        
+        # 8. Update quiz with submission type and status
         update_data = {
-            "status": "completed",
+            "status": status,
             "userAnswers": answers,
             "score": result_data["score"],
             "totalQuestions": result_data.get("total", len(quiz["questions"])),
@@ -227,7 +265,8 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
             "timeSpent": time_spent,
             "submittedAt": datetime.now(),
             "completedAt": datetime.now(),
-            "submissionType": submission_type
+            "submissionType": submission_type,
+            "unansweredCount": unanswered_count
         }
 
         # ✅ Update the database
@@ -236,18 +275,19 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
             {"$set": update_data}
         )
 
-        # ✅ Send notification (ONLY ONE)
+        # ✅ Send notification based on submission type
         session_id = str(quiz.get("sessionId"))
+        
         await quiz_submitted_notification(
             user_id=user["id"],
             session_id=session_id,
             score=update_data["score"],
             total=update_data["totalQuestions"],
             percentage=update_data["percentage"],
-            submission_type=submission_type
+            submission_type=submission_type,
         )
 
-        # 8. Return results
+        # 9. Return results with submission type and status
         return {
             "success": True,
             "quizId": quiz_id,
@@ -261,12 +301,17 @@ async def submit_quiz_service(quiz_id: str, answers: List[int], time_spent: int,
             "timeLimitPerQuestion": quiz.get("timeLimitPerQuestion", 180),
             "completedAt": update_data["completedAt"].isoformat(),
             "submissionType": submission_type,
+            "status": status,  # Return status
+            "unansweredCount": unanswered_count,
             "timePerQuestion": [q.get("timeSpentOnQuestion", 0) for q in results_with_options]
         }
         
     except HTTPException:
         raise
-
+    except Exception as e:
+        print(f"Error submitting quiz: {e}")
+        raise HTTPException(500, f"Failed to submit quiz: {str(e)}")
+    
 async def get_quiz_results_service(quiz_id: str, user):
     quiz = await quizzes.find_one({"_id": ObjectId(quiz_id)})
     if not quiz:
@@ -284,15 +329,63 @@ async def get_quiz_results_service(quiz_id: str, user):
             q.get("timeSpentOnQuestion", 0) for q in result["results"]
         ]
     
+    # Ensure submissionType and status are set
+    if "submissionType" not in result:
+        # Map status to submission type
+        status_map = {
+            "completed": SUBMISSION_TYPE["MANUAL"],
+            "auto_submitted": SUBMISSION_TYPE["AUTO"],
+            "abandoned": SUBMISSION_TYPE["ABANDONED"],
+            "refresh_submitted": SUBMISSION_TYPE["REFRESH"],
+            "navigation_submitted": SUBMISSION_TYPE["BACK_BUTTON"]
+        }
+        result["submissionType"] = status_map.get(result.get("status"), SUBMISSION_TYPE["MANUAL"])
+    
     return result
 
-async def get_user_quizzes_service(session_id: str, user):
+async def get_user_quizzes_service(session_id: str, user, page: int = 1, limit: int = 10):
+    """
+    Get paginated quizzes for a session
+    """
+    # Calculate skip value for pagination
+    skip = (page - 1) * limit
+    
+    # Get total count for pagination
+    total = await quizzes.count_documents({
+        "sessionId": ObjectId(session_id),
+        "userId": ObjectId(user["id"])
+    })
+    
+    # Get paginated quizzes
     quizzes_list = await quizzes.find({
         "sessionId": ObjectId(session_id),
         "userId": ObjectId(user["id"])
-    }).sort("createdAt", -1).to_list(length=20)
+    }).sort("createdAt", -1).skip(skip).limit(limit).to_list(length=limit)
     
-    return [serialize_doc(q) for q in quizzes_list]
+    serialized_quizzes = []
+    for q in quizzes_list:
+        quiz_data = serialize_doc(q)
+        
+        if "submissionType" not in quiz_data:
+            if quiz_data.get("status") == "auto_submitted":
+                quiz_data["submissionType"] = SUBMISSION_TYPE["AUTO"]
+            elif quiz_data.get("status") == "navigation_submitted":
+                quiz_data["submissionType"] = SUBMISSION_TYPE["BACK_BUTTON"]
+            else:
+                quiz_data["submissionType"] = SUBMISSION_TYPE["MANUAL"]
+                quiz_data["status"] = "completed"
+        
+        serialized_quizzes.append(quiz_data)
+    
+    return {
+        "quizzes": serialized_quizzes,
+        "pagination": {
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": (total + limit - 1) // limit
+        }
+    }
 
 async def delete_quiz_service(quiz_id: str, user):
     quiz = await quizzes.find_one({"_id": ObjectId(quiz_id)})
@@ -363,7 +456,23 @@ async def get_quiz_analytics_service(session_id: str, time_range: str, user):
         else:
             score_distribution[0] += 1
     
-    # 6. Calculate daily performance (last 30 days max)
+    # 6. Calculate submission type distribution
+    submission_distribution = {
+        SUBMISSION_TYPE["MANUAL"]: 0,
+        SUBMISSION_TYPE["AUTO"]: 0,
+        SUBMISSION_TYPE["ABANDONED"]: 0,
+        SUBMISSION_TYPE["BACK_BUTTON"]: 0,
+        SUBMISSION_TYPE["REFRESH"]: 0
+    }
+    
+    for quiz in filtered_quizzes:
+        sub_type = quiz.get("submissionType", SUBMISSION_TYPE["MANUAL"])
+        if sub_type in submission_distribution:
+            submission_distribution[sub_type] += 1
+        else:
+            submission_distribution[SUBMISSION_TYPE["MANUAL"]] += 1
+    
+    # 7. Calculate daily performance (last 30 days max)
     daily_performance = {}
     for quiz in filtered_quizzes:
         quiz_date = quiz.get("createdAt")
@@ -382,7 +491,7 @@ async def get_quiz_analytics_service(session_id: str, time_range: str, user):
             "score": round(avg_score, 1)
         })
     
-    # 7. Calculate improvement rate (compare first and last quiz)
+    # 8. Calculate improvement rate (compare first and last quiz)
     if len(filtered_quizzes) >= 2:
         first_quiz = filtered_quizzes[-1]  # Oldest
         last_quiz = filtered_quizzes[0]    # Most recent
@@ -390,14 +499,14 @@ async def get_quiz_analytics_service(session_id: str, time_range: str, user):
     else:
         improvement_rate = 0
     
-    # 8. Calculate completion rate
+    # 9. Calculate completion rate
     total_attempts = await quizzes.count_documents({
         "sessionId": ObjectId(session_id),
         "userId": ObjectId(user["id"])
     })
     completion_rate = (total_quizzes / total_attempts * 100) if total_attempts > 0 else 100
     
-    # 9. Return analytics data
+    # 10. Return analytics data
     return {
         "success": True,
         "timeRange": time_range,
@@ -409,6 +518,7 @@ async def get_quiz_analytics_service(session_id: str, time_range: str, user):
         "improvementRate": round(improvement_rate, 1),
         "completionRate": round(completion_rate, 1),
         "scoreDistribution": score_distribution,
+        "submissionDistribution": submission_distribution,
         "dailyPerformance": daily_performance_list,
         "recentQuizzes": [
             {
@@ -418,7 +528,7 @@ async def get_quiz_analytics_service(session_id: str, time_range: str, user):
                 "total": q.get("totalQuestions", 0),
                 "percentage": q.get("percentage", 0),
                 "timeSpent": q.get("timeSpent", 0),
-                "submissionType": q.get("submissionType", "manual")
+                "submissionType": q.get("submissionType", SUBMISSION_TYPE["MANUAL"])
             }
             for q in filtered_quizzes[:5]  # Last 5 quizzes
         ]
@@ -476,7 +586,6 @@ async def get_topic_performance_service(session_id: str, user):
         "topicPerformance": topic_performance
     }
 
-# NEW FUNCTION: Track question time
 async def track_question_time_service(quiz_id: str, question_index: int, user):
     """
     Track when user moves to a new question
@@ -513,3 +622,53 @@ async def track_question_time_service(quiz_id: str, question_index: int, user):
     )
     
     return {"success": True, "message": "Time tracked for question"}
+
+async def get_submission_stats_service(session_id: str, user):
+    """
+    Get statistics about submission types
+    """
+    # Get all quizzes for this session
+    quizzes_list = await quizzes.find({
+        "sessionId": ObjectId(session_id),
+        "userId": ObjectId(user["id"])
+    }).to_list(None)
+    
+    if not quizzes_list:
+        return {
+            "total": 0,
+            "distribution": {
+                SUBMISSION_TYPE["MANUAL"]: 0,
+                SUBMISSION_TYPE["AUTO"]: 0,
+                SUBMISSION_TYPE["ABANDONED"]: 0,
+                SUBMISSION_TYPE["BACK_BUTTON"]: 0,
+                SUBMISSION_TYPE["REFRESH"]: 0
+            },
+            "percentages": {}
+        }
+    
+    # Calculate distribution
+    distribution = {
+        SUBMISSION_TYPE["MANUAL"]: 0,
+        SUBMISSION_TYPE["AUTO"]: 0,
+        SUBMISSION_TYPE["ABANDONED"]: 0,
+        SUBMISSION_TYPE["BACK_BUTTON"]: 0,
+        SUBMISSION_TYPE["REFRESH"]: 0
+    }
+    
+    for quiz in quizzes_list:
+        sub_type = quiz.get("submissionType", SUBMISSION_TYPE["MANUAL"])
+        if sub_type in distribution:
+            distribution[sub_type] += 1
+        else:
+            distribution[SUBMISSION_TYPE["MANUAL"]] += 1
+    
+    total = len(quizzes_list)
+    percentages = {}
+    for key, value in distribution.items():
+        percentages[key] = round((value / total * 100), 1) if total > 0 else 0
+    
+    return {
+        "total": total,
+        "distribution": distribution,
+        "percentages": percentages
+    }
