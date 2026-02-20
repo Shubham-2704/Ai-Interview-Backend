@@ -16,9 +16,11 @@ from routes.settings_routes import router as settings_router
 from routes.websocket_routes import router as websocket_router
 from middlewares.request_tracker import *
 from starlette.staticfiles import StaticFiles
+import os
 
 
 app = FastAPI(lifespan=lifespan)
+
 
 # CORS
 app.add_middleware(
@@ -30,6 +32,8 @@ app.add_middleware(
 )
 
 # Static Files
+if not os.path.exists("uploads"):
+    os.makedirs("uploads")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Include Routers
