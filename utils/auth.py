@@ -25,13 +25,13 @@ def decode_token(token: str):
 
 async def verify_google_token(token: str) -> Optional[Dict]:
     """
-    Verify Google OAuth token and return user info
+    Verify Google OAuth access token and return user info
     """
     try:
         async with httpx.AsyncClient() as client:
-            # First, verify the token with Google
+            # First, verify the token is valid and get basic info
             token_info_response = await client.get(
-                f"https://oauth2.googleapis.com/tokeninfo?id_token={token}"
+                f"https://www.googleapis.com/oauth2/v1/tokeninfo?access_token={token}"
             )
             
             if token_info_response.status_code != 200:
@@ -40,49 +40,29 @@ async def verify_google_token(token: str) -> Optional[Dict]:
             token_info = token_info_response.json()
             
             # Verify the audience (client ID)
-            if token_info.get("aud") != GOOGLE_CLIENT_ID:
+            if token_info.get("audience") != GOOGLE_CLIENT_ID:
                 return None
             
-            # Get additional user info from Google People API
+            # Get user info from Google UserInfo endpoint (this returns profile data)
             headers = {"Authorization": f"Bearer {token}"}
             user_info_response = await client.get(
-                "https://people.googleapis.com/v1/people/me",
-                params={"personFields": "names,emailAddresses,photos"},
+                "https://www.googleapis.com/oauth2/v2/userinfo",
                 headers=headers
             )
             
             if user_info_response.status_code != 200:
-                # If People API fails, use info from token
-                return {
-                    "email": token_info.get("email"),
-                    "name": token_info.get("name"),
-                    "picture": token_info.get("picture"),
-                    "sub": token_info.get("sub"),
-                    "email_verified": token_info.get("email_verified", False)
-                }
+                print(f"Userinfo endpoint failed: {user_info_response.status_code}")
+                return None
             
             user_info = user_info_response.json()
             
-            # Extract user data
-            email = None
-            name = None
-            picture = None
-            
-            if "emailAddresses" in user_info and user_info["emailAddresses"]:
-                email = user_info["emailAddresses"][0].get("value")
-            
-            if "names" in user_info and user_info["names"]:
-                name = user_info["names"][0].get("displayName")
-            
-            if "photos" in user_info and user_info["photos"]:
-                picture = user_info["photos"][0].get("url")
-            
+            # The userinfo endpoint returns all the data we need directly
             return {
-                "email": email or token_info.get("email"),
-                "name": name or token_info.get("name"),
-                "picture": picture or token_info.get("picture"),
-                "sub": token_info.get("sub"),
-                "email_verified": token_info.get("email_verified", False)
+                "email": user_info.get("email"),
+                "name": user_info.get("name"),
+                "picture": user_info.get("picture"),
+                "sub": user_info.get("id"),  # Google user ID
+                "email_verified": user_info.get("verified_email", False)
             }
             
     except Exception as e:

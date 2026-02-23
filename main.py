@@ -31,11 +31,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Static Files
-if not os.path.exists("uploads"):
-    os.makedirs("uploads")
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
 # Include Routers
 app.include_router(auth_router)
 app.include_router(session_router)
