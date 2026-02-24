@@ -1,10 +1,11 @@
+from typing import Dict
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from datetime import datetime
 import os
 import os
-import httpx  
+import cloudinary
+import cloudinary.uploader  
 import traceback
-import base64
 
 # async def upload_image(image: UploadFile = File(...)):
 #     save_path = f"uploads/{image.filename}"
@@ -15,14 +16,30 @@ import base64
 #     image_url = f"{os.getenv("PHOTO_URL")}/{save_path}"
 #     return {"imageUrl": image_url}
 
-IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")  
-IMGBB_UPLOAD_URL = os.getenv("IMGBB_UPLOAD_URL")
+# Configure Cloudinary
+CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
+CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
+CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
 
-async def upload_image(image: UploadFile = File(...)):
+# Configure Cloudinary SDK
+cloudinary.config(
+    cloud_name=CLOUDINARY_CLOUD_NAME,
+    api_key=CLOUDINARY_API_KEY,
+    api_secret=CLOUDINARY_API_SECRET,
+    secure=True  # Use HTTPS
+)
+
+async def upload_image(image: UploadFile = File(...)) -> Dict:
+    """
+    Upload image to Cloudinary and return the URL
+    """
     try:
-        # Validate API key
-        if not IMGBB_API_KEY:
-            raise HTTPException(status_code=500, detail="IMGBB_API_KEY not configured")
+        # Validate credentials
+        if not all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
+            raise HTTPException(
+                status_code=500, 
+                detail="Cloudinary credentials not configured"
+            )
         
         # Validate file exists
         if not image:
@@ -35,49 +52,58 @@ async def upload_image(image: UploadFile = File(...)):
         if len(image_data) == 0:
             raise HTTPException(status_code=400, detail="Empty file")
         
-        # Check file size (32MB max)
+        # Check file size (Cloudinary free limit is 100MB for upload_large, 10MB for normal upload)
         file_size_mb = len(image_data) / (1024 * 1024)
-        if file_size_mb > 32:
-            raise HTTPException(status_code=400, detail=f"File too large: {file_size_mb:.2f}MB (max 32MB)")
+        if file_size_mb > 100:
+            raise HTTPException(status_code=400, detail=f"File too large: {file_size_mb:.2f}MB (max 100MB)")
         
         # Check file type
-        allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp"]
+        allowed_types = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"]
         if image.content_type not in allowed_types:
             raise HTTPException(status_code=400, detail=f"Invalid file type: {image.content_type}")
         
-        # Convert to base64
-        image_base64 = base64.b64encode(image_data).decode('utf-8')
+        # Generate a unique public ID
+        timestamp = int(datetime.now().timestamp())
+        public_id = f"profile_{timestamp}"
         
-        # Prepare payload
-        payload = {
-            'key': IMGBB_API_KEY,
-            'image': image_base64,
-            'name': f"profile_{datetime.now().timestamp()}",
-            'expiration': 0
+        # Upload to Cloudinary
+        # For files under 10MB, use upload
+        # For larger files (up to 100MB), use upload_large
+        upload_method = cloudinary.uploader.upload_large if file_size_mb > 10 else cloudinary.uploader.upload
+        
+        upload_result = upload_method(
+            image_data,
+            public_id=public_id,
+            folder="profile_photos",
+            overwrite=True,
+            resource_type="image",
+            transformation=[
+                {"width": 300, "height": 300, "crop": "fill", "gravity": "face"},  # Auto-crop to face
+                {"quality": "auto:good", "fetch_format": "auto"}  # Auto-optimize
+            ]
+        )
+        
+        # Get the secure URL (HTTPS)
+        image_url = upload_result['secure_url']
+        
+        # Optional: Get delete token for future deletion
+        delete_token = upload_result.get('delete_token')
+        
+        print(f"✅ Upload successful: {image_url}")
+        
+        return {
+            "success": True,
+            "imageUrl": image_url,
+            "public_id": upload_result['public_id'],
+            "delete_token": delete_token,
+            "service": "cloudinary",
+            "size_kb": len(image_data) / 1024
         }
         
-        # Upload to ImgBB
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(IMGBB_UPLOAD_URL, data=payload)
-            
-            if response.status_code != 200:
-                raise HTTPException(status_code=502, detail=f"ImgBB error: {response.status_code}")
-            
-            imgbb_response = response.json()
-            
-            if not imgbb_response.get('success'):
-                raise HTTPException(status_code=502, detail="ImgBB upload failed")
-            
-            return {
-                "success": True,
-                "imageUrl": imgbb_response['data']['url'],
-                "delete_url": imgbb_response['data']['delete_url']
-            }
-            
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Upload error: {str(e)}")
+        print(f"❌ Upload error: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
     finally:
